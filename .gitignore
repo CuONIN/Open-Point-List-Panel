@@ -1,0 +1,24 @@
+# Project-local runtime, user data and import/backup work files
+/.runtime/
+/.venv/
+/data/
+/backups/
+/.env
+/.env.*
+!/.env.example
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.sqlite3-*
+*.db-wal
+*.db-shm
+.pytest_cache/
+
+# Production workbooks, station drawings and feedback stay on the workstation.
+/EOL/
+/FAL/
+/PAL_Gearbox/
+/PAL_Stator/
+/doc/*.xlsx
+/doc/*.xlsm
+~$*

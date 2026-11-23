@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="1005" viewBox="0 0 1320 1005" role="img" aria-labelledby="title description">
+<title id="title">EOL 问题状态机</title>
+<desc id="description">现场会议推动排期、开工、完成和上报。核查退回进入需返工。澄清、等待和谈判有独立状态。客户正式版触发客户关闭、转纯 ZF、重开和责任转回。配套开发设计文档的第 2 节列出全部后继和触发条件。</desc>
+<defs>
+ <marker id="flow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#426e6b"/></marker>
+ <marker id="return" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#986635"/></marker>
+ <style>
+ text {font-family:"Microsoft YaHei","Noto Sans CJK SC","SimHei",sans-serif;fill:#162f3a}
+ .title {font-size:34px;font-weight:700;letter-spacing:1px}
+ .head {font-size:23px;font-weight:700}
+ .state {font-size:20px;font-weight:700}
+ .body {font-size:17px}
+ .small {font-size:14px;fill:#35515f}
+ .note {font-size:16px;fill:#425e68}
+ .cardhead {font-size:19px;font-weight:700}
+ .tag {font-size:14px;font-weight:700;fill:#456976}
+ .backtext {font-size:15px;fill:#75491d}
+ .link {fill:none;stroke:#426e6b;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+ .loop {fill:none;stroke:#986635;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+ </style>
+</defs>
+<rect width="1320" height="1005" fill="#f3f6f7"/>
+<text x="43" y="55" class="title" >EOL 问题状态机</text>
+<text x="45" y="83" class="note" >会议记录我方进度。客户新版提供归档和恢复跟踪的依据。</text>
+<text x="1273" y="57" class="tag" text-anchor="end">ZF Saarbrücken   /   EOL</text>
+<rect x="25" y="102" width="1270" height="254" rx="16" fill="#ffffff" stroke="#d5dfe2" stroke-width="1.5"/>
+<text x="50" y="137" class="head" >现场主流程</text>
+<text x="233" y="135" class="note" >使用者从问题行选择下一状态，填完对应字段后生效。</text>
+<rect x="53" y="153" width="202" height="67" rx="12" fill="#f1f5f9" stroke="#a6b5c6" stroke-width="1.5"/><text x="154" y="181" class="state" text-anchor="middle">待梳理</text><text x="154" y="206" class="small" text-anchor="middle">新增、存量或重新评估</text>
+<rect x="306" y="153" width="202" height="67" rx="12" fill="#eef4fd" stroke="#97b4db" stroke-width="1.5"/><text x="407" y="181" class="state" text-anchor="middle">已列入计划</text><text x="407" y="206" class="small" text-anchor="middle">计划日期或带年份的周</text>
+<rect x="559" y="153" width="202" height="67" rx="12" fill="#e5f4ed" stroke="#80b8a4" stroke-width="1.5"/><text x="660" y="181" class="state" text-anchor="middle">整改中</text><text x="660" y="206" class="small" text-anchor="middle">确认开工人和实际开工日</text>
+<rect x="812" y="153" width="202" height="67" rx="12" fill="#fff4de" stroke="#d8b576" stroke-width="1.5"/><text x="913" y="181" class="state" text-anchor="middle">完成待上报</text><text x="913" y="206" class="small" text-anchor="middle">登记完成日期与结果</text>
+<rect x="1065" y="153" width="202" height="67" rx="12" fill="#e9effb" stroke="#9cafd3" stroke-width="1.5"/><text x="1166" y="181" class="state" text-anchor="middle">已上报待核查</text><text x="1166" y="206" class="small" text-anchor="middle">登记上报日期与接收凭据</text>
+<path d="M 259 186 H 299" class="link" marker-end="url(#flow)"/>
+<path d="M 512 186 H 552" class="link" marker-end="url(#flow)"/>
+<path d="M 765 186 H 805" class="link" marker-end="url(#flow)"/>
+<path d="M 1018 186 H 1058" class="link" marker-end="url(#flow)"/>
+<rect x="812" y="262" width="202" height="59" rx="12" fill="#faecde" stroke="#c99f77" stroke-width="1.5"/>
+<text x="913" y="288" class="state" text-anchor="middle">需返工</text>
+<text x="913" y="310" class="small" text-anchor="middle">退回日期、原因和下一步</text>
+<path d="M 1166 221 V 291 H 1021" class="loop" marker-end="url(#return)"/>
+<text x="1089" y="277" class="backtext" text-anchor="middle">核查退回</text>
+<path d="M 810 291 H 660 V 226" class="loop" marker-end="url(#return)"/>
+<text x="736" y="277" class="backtext" text-anchor="middle">确认重新开工</text>
+<text x="55" y="266" class="body" >现场已开工或已经完成的项，可从待梳理直接登记。</text>
+<text x="55" y="297" class="note" >返工需要先排期时，可回到已列入计划。</text>
+<rect x="25" y="372" width="1270" height="288" rx="16" fill="#ffffff" stroke="#d5dfe2" stroke-width="1.5"/>
+<text x="50" y="408" class="head" >澄清、等待与谈判</text>
+<text x="337" y="405" class="note" >澄清事项、资源约期和谈判结论分别记录。</text>
+<rect x="52" y="429" width="420" height="187" rx="12" fill="#f1f6fc" stroke="#c4d2e4" stroke-width="1.5"/>
+<text x="71" y="459" class="cardhead" >澄清与确认</text>
+<text x="71" y="489" class="body" >待 ZF 澄清问题  ·  说明具体疑点</text>
+<text x="71" y="517" class="body" >待 ZF 确认方案  ·  提交拟实施措施</text>
+<text x="71" y="545" class="body" >待内部确认  ·  指定内部对接方</text>
+<text x="71" y="587" class="small" >记录答复或改走其他路径的原因，再选择后继。</text>
+<rect x="489" y="429" width="389" height="187" rx="12" fill="#f1f7f4" stroke="#c0d5c9" stroke-width="1.5"/>
+<text x="508" y="459" class="cardhead" >等待实施条件</text>
+<text x="508" y="490" class="body" >待投产、物料、施工窗口、供应商或人力</text>
+<text x="508" y="519" class="body" >记已知单号、约期或下次跟进日。</text>
+<text x="508" y="559" class="note" >确认到货、到场或窗口日期后</text>
+<text x="508" y="587" class="body" >→ 已列入计划／整改中</text>
+<rect x="895" y="429" width="372" height="187" rx="12" fill="#faf3eb" stroke="#decbb6" stroke-width="1.5"/>
+<text x="914" y="459" class="cardhead" >无法整改需谈判</text>
+<text x="914" y="490" class="body" >从任一跟踪状态进入。</text>
+<text x="914" y="519" class="body" >登记原因、跟踪人和拟谈事项。</text>
+<text x="914" y="559" class="note" >会议记录谈判结论后</text>
+<text x="914" y="587" class="body" >→ 待梳理</text>
+<text x="54" y="642" class="note" >可转入各分支的起点、切换澄清对象及上报前补做等完整路径，见开发设计中的人工流转矩阵。</text>
+<rect x="25" y="676" width="1270" height="300" rx="16" fill="#ffffff" stroke="#d5dfe2" stroke-width="1.5"/>
+<text x="50" y="713" class="head" >客户版本触发</text>
+<text x="260" y="711" class="note" >按生效版本判断，客户正式关闭优先。</text>
+<text x="59" y="765" class="body" >客户标为 erledigt</text>
+<path d="M 433 759 H 495" class="link" marker-end="url(#flow)"/>
+<rect x="505" y="740" width="222" height="39" rx="8" fill="#eff5f5" stroke="#b8cccd" stroke-width="1.5"/>
+<text x="616" y="765" class="cardhead" text-anchor="middle">客户已关闭</text>
+<text x="763" y="765" class="note" >记录来源版本、客户日期或首次观察日期。</text>
+<text x="59" y="819" class="body" >客户仍开放，责任方只有 ZF</text>
+<path d="M 433 813 H 495" class="link" marker-end="url(#flow)"/>
+<rect x="505" y="794" width="222" height="39" rx="8" fill="#eff5f5" stroke="#b8cccd" stroke-width="1.5"/>
+<text x="616" y="819" class="cardhead" text-anchor="middle">转纯 ZF</text>
+<text x="763" y="819" class="note" >结束我方待办，客户总账继续跟踪。</text>
+<text x="59" y="873" class="body" >客户重开或责任转回，我方承担责任</text>
+<path d="M 433 867 H 495" class="link" marker-end="url(#flow)"/>
+<rect x="505" y="848" width="222" height="39" rx="8" fill="#eff5f5" stroke="#b8cccd" stroke-width="1.5"/>
+<text x="616" y="873" class="cardhead" text-anchor="middle">待梳理</text>
+<text x="763" y="873" class="note" >写入重开或转回事件，沿用问题和历史。</text>
+<text x="55" y="936" class="note" >仅有 offen 与 in Arbeit 互换时，保存客户字段变化。我方正式状态由会议继续维护。</text>
+</svg>
