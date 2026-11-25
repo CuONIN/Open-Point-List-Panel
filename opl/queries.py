@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from difflib import SequenceMatcher
 import re
 
+from .excel import classify_responsible
 from .people import customer_author, internal_owner
 from .stations import station_label
 from .store import decode, iso_day, need_issue, number_map, today, week_bounds, week_of
@@ -146,6 +147,18 @@ def scheduled(row,week):
     return bool(plan) and (plan==week if "-W" in plan else week_of(plan)==week)
 
 
+def weekly_work(rows, week, start, end):
+    """合并本周排期与截至统计日仍在本周开工的项。 / Include scheduled work and the latest transition into working this week."""
+    result = []
+    for row in rows:
+        scheduled_here = scheduled(row, week)
+        started_here = (row["state"] == "working" and row["state_kind"] != "baseline"
+                        and start <= row["state_day"] <= end)
+        if scheduled_here or started_here:
+            result.append({**row, "is_week_plan": scheduled_here, "working_since": row["state_day"] if started_here else ""})
+    return result
+
+
 def unreported(conn,cutoff):
     sent,cycle={},{}
     for r in conn.execute("""SELECT issue_id,to_state,id FROM events WHERE day<=?
@@ -156,7 +169,9 @@ def unreported(conn,cutoff):
 
 MULTI_FIELDS = ("station", "machine", "avo", "area", "author", "department", "category", "priority",
                "responsible", "owner", "zf", "state")
-ZF_GROUPS = {"pure": {"zf"}, "joint": {"joint"}, "any": {"zf", "joint"}, "none": {"haosen"}}
+BLANK = "__blank__"
+NO_SELECTION = "__none__"
+ZF_GROUPS = {"pure": {"zf"}, "joint": {"joint"}, "any": {"zf", "joint"}, "none": {"haosen"}, BLANK: {"unknown", ""}}
 
 
 def selected(params, key):
@@ -167,6 +182,16 @@ def selected(params, key):
         if not isinstance(values, (list, tuple, set)):
             values = [values]
     return tuple(dict.fromkeys(str(v).strip() for v in values if v is not None and str(v).strip()))
+
+
+def scope_for(params):
+    """显式范围优先，旧书签按所选归档条件展开。 / Respect an explicit scope and expand legacy archive bookmarks."""
+    if params.get("scope"):
+        return params["scope"]
+    archives = (set(selected(params, "state")).intersection(ARCHIVE)
+                or set(selected(params, "zf")).intersection({"pure", "any"})
+                or any(classify_responsible(v) == "zf" for v in selected(params, "responsible")))
+    return "all" if archives or params.get("mode") == "occurred" else "ours"
 
 
 def add_related_numbers(conn, rows, numbers, cutoff):
@@ -216,9 +241,9 @@ def filtered_issues(conn, params, *, source=False):
     rows = rows_at(conn, cutoff, source=source)
     numbers = {row["id"]: row["number"] for row in rows}
     states = selected(params, "state")
-    scope = params.get("scope") or ("all" if mode == "occurred" or set(states).intersection(ARCHIVE) else "ours")
+    scope = scope_for(params)
     if scope == "ours":
-        rows = [r for r in rows if r["state"] not in ARCHIVE]
+        rows = [r for r in rows if r["state"] not in ARCHIVE and r["resp_class"] != "zf"]
     elif scope == "customer":
         rows = [r for r in rows if r["state"] != "closed"]
     if mode == "occurred":
@@ -237,7 +262,7 @@ def filtered_issues(conn, params, *, source=False):
     if mode == "latest":
         rows = [r for r in rows if r["state_kind"] != "baseline" and start <= r["state_day"] <= min(end, cutoff)]
     if mode in ("planned", "unreported"):
-        rows = [r for r in rows if scheduled(r, week)]
+        rows = weekly_work(rows, week, start, min(end, cutoff))
         if mode == "unreported":
             sent = unreported(conn, cutoff)
             rows = [r for r in rows if r["id"] not in sent and r["state"] not in ARCHIVE]
@@ -249,11 +274,16 @@ def filtered_issues(conn, params, *, source=False):
             choices += selected(params, "tracker")  # Bookmarks saved by the first release.
         if not choices:
             continue
+        if choices == (NO_SELECTION,):
+            rows = []
+            break
         values = {v.casefold() for v in choices}
         if key == "station":
             values = {station_label(v).casefold() for v in values}
         if key == "author":
             values = {customer_author(v).casefold() for v in values}
+        if key != "zf" and BLANK in values:
+            values.add("")
         if key == "owner":
             rows = [r for r in rows if any(v.casefold() in values for v in [r["owner"], *owner_names(r["owner"])])]
         elif key == "zf":
@@ -261,10 +291,14 @@ def filtered_issues(conn, params, *, source=False):
             rows = [r for r in rows if r["resp_class"] in accepted]
         else:
             rows = [r for r in rows if str(r.get(key) or "").casefold() in values]
-    q = (params.get("q") or "").strip().casefold().lstrip("#")
+    q = (params.get("q") or "").strip().casefold()
     if q:
-        if re.fullmatch(r"\d+[a-z]*", q) and not q.startswith("2482"):
-            rows = [r for r in rows if q in r["aliases"]]
+        # 多号搜索取精确别名的并集，保留单个机器号及普通文本搜索。 / Union exact issue aliases; retain single machine and text searches.
+        tokens = [s.strip().removeprefix("#") for s in re.split("[,，]", q) if s.strip()]
+        is_number_list = tokens and all(re.fullmatch(r"[0-9]+[a-z]*", token) for token in tokens)
+        if is_number_list and (len(tokens) > 1 or not tokens[0].startswith("2482") or q.startswith("#")):
+            wanted = set(tokens)
+            rows = [r for r in rows if not wanted.isdisjoint(r["aliases"])]
         else:
             keys = ("number", "station", "station_raw", "machine", "avo", "zh", "en", "problem",
                     "latest", "note", "owner", "author", "author_raw", "order_no")
@@ -292,15 +326,18 @@ def issue_list(conn, params):
 
 
 def options(conn):
-    choices=defaultdict(set)
-    keys=("station","machine","avo","area","author","department","category","responsible","owner","priority")
+    """按实际字段值建筛选菜单，区分空值、全选与没有勾选。 / Preserve blank values as selectable options."""
+    keys = ("station","machine","avo","area","author","department","category","responsible","owner","priority")
+    choices = {key: set() for key in keys}
+    zf_choices = {"none", "pure", "joint"}
     for row in rows_at(conn):
         for key in keys:
-            if key == "owner":
-                choices[key].update(owner_names(row[key]))
-            elif row[key]:
-                choices[key].add(row[key])
-    return {key:sorted(choices[key]) for key in keys}
+            values = owner_names(row[key]) if key == "owner" else [row[key]]
+            choices[key].update(value or BLANK for value in (values or [BLANK]))
+        if row["resp_class"] not in ("zf", "haosen", "joint"):
+            zf_choices.add(BLANK)
+    choices["zf"] = zf_choices
+    return {key: sorted(values) for key, values in choices.items()}
 
 
 def overview(conn,params):
@@ -326,8 +363,8 @@ def overview(conn,params):
         current_events.append({**event_view(e),"number":item["number"],"station":item["station"],"owner":item["owner"]})
         per_state[e["to_state"]].add(e["issue_id"])
         per_reason[e["kind"]].add(e["issue_id"])
-    plans=[r for r in rows if scheduled(r,week)]
-    plans.sort(key=lambda r:(r["plan"],r["number"]))
+    plans = weekly_work(rows, week, start, min(end, cutoff))
+    plans.sort(key=lambda r: (r["plan"] if r["is_week_plan"] else r["working_since"], r["number"]))
     return dict(week=week,start=start,end=end,as_of=cutoff,
                 totals=dict(ours=len(active),customer=sum(r["state"]!="closed" for r in rows),
                             delta=None if prior_total is None else len(active)-prior_total,new=len(per_reason["new"]),
@@ -465,7 +502,14 @@ def report(conn,params,summary=None):
     if not o["events"]: lines.append("本周尚无状态变更。")
     lines.extend(["","本周计划"])
     for r in o["plans"]:
-        lines.extend([f"#{r['number']}  {r['station']}  {r['plan']}  {r['plan_owner']}  {r['plan_note']}  · {r['state_label']}",
+        timing = []
+        if r["is_week_plan"]:
+            timing.append("计划 " + r["plan"])
+        if r["working_since"]:
+            timing.append("进入整改 " + r["working_since"])
+        owner = r["plan_owner"] if r["is_week_plan"] else r["owner"]
+        note = r["plan_note"] if r["is_week_plan"] else ""
+        lines.extend([f"#{r['number']}  {r['station']}  {' / '.join(timing)}  {owner}  {note}  · {r['state_label']}",
                       r["zh"] or "中文待译",r["problem"]])
     if not o["plans"]: lines.append("本周尚无已登记计划。")
     lines.extend(["","专项任务"])

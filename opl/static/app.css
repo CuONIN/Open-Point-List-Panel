@@ -129,6 +129,14 @@ main{max-width:1800px;margin:0 auto;padding:26px clamp(16px,2.6vw,42px) 42px;out
 .flow-line{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .flow-line .stamp{margin-left:auto;color:var(--quiet);font-size:.8rem}
 .flow-detail{margin-top:3px;color:var(--muted);font-size:.84rem;overflow-wrap:anywhere}
+/* 概览卡片各自滚动，标题、汇总和链接保持可见。 / Scroll each overview list independently of its heading and footer. */
+.overview-scroll{max-block-size:clamp(215px,43vh,395px);overflow-y:auto;overscroll-behavior-y:contain;scrollbar-gutter:stable;scrollbar-color:#849b91 #edf2ef;padding-inline-end:7px}
+.overview-scroll:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:3px}
+.overview-scroll .flow-line b{min-width:0;overflow-wrap:anywhere}
+.overview-dates{display:flex;flex-wrap:wrap;gap:2px 14px;margin-top:4px;color:var(--muted);font-size:.82rem}
+.overview-dates span{white-space:nowrap}
+.overview-dates b{font-weight:550;color:var(--ink)}
+@media print{.overview-scroll{max-block-size:none;overflow:visible;scrollbar-gutter:auto;padding-inline-end:0}}
 .overall-numbers{display:flex;flex-wrap:wrap;gap:0;padding:8px 18px 17px}
 .overall-num{padding:1px 25px;border-right:1px solid var(--line);text-align:left}
 .overall-num:first-child{padding-left:0}.overall-num:last-child{border:0}
@@ -167,6 +175,10 @@ main{max-width:1800px;margin:0 auto;padding:26px clamp(16px,2.6vw,42px) 42px;out
 .multi-choice,.review-choice{display:flex;align-items:flex-start;gap:8px;padding:6px 7px;border-radius:4px;line-height:1.45;font-size:.85rem;cursor:pointer;overflow-wrap:anywhere}
 .multi-choice:hover,.review-choice:hover{background:#edf5f0}
 .multi-choice input,.review-choice input{width:16px;height:16px;flex-shrink:0;margin:2px 0 0;accent-color:var(--primary)}
+.multi-choice>small{margin-left:auto;white-space:nowrap;align-self:center;color:#5a675f;font-size:.75rem}
+.picker-actions{display:flex;align-items:center;justify-content:flex-start;gap:4px;flex-wrap:wrap;padding:2px 0 4px;margin-bottom:3px;border-bottom:1px solid var(--line)}
+.picker-actions .text-btn{padding:4px 6px;font-size:.82rem}
+.picker-foot [data-picker-count]{color:var(--muted);font-variant-numeric:tabular-nums}
 .multi-choices>small{display:block;padding:7px}
 .picker-search{display:flex;align-items:center;gap:5px;padding:2px 6px 6px;border-bottom:1px solid var(--line);margin-bottom:3px}
 .picker-search svg{color:var(--quiet);width:15px;height:15px}

@@ -56,11 +56,11 @@ function historyView(d){
   const events=d.events || [];
   const keys={...fieldNames,resource:"等待事项",expected:"确认约期",followup:"下次跟进日",order:"物料单号",obstacle:"实施阻碍",outcome:"处理结论",available_day:"确认条件日期",executor:"执行人",contact:"对接人或凭据",basis:"日期依据",version:"来源版本"};
   const history=section("我方状态历史",events.length?events.map(ev=>{
-    const data=Object.entries(normalizeOwner(ev.payload || {})).filter(([k,v])=>v && k!=="note");
+    const data=Object.entries(normalizeOwner(ev.payload || {})).filter(([k,v])=>v && k!=="note" && !(ev.kind==="manual_closed" && k==="evidence"));
     return '<article class="time-item"><div class="time-head"><b>'+esc(ev.day || "日期待核")+'</b>'+ (ev.from_state?statePill(ev.from_state)+icon("arrow"):"")+statePill(ev.to_state || ev.state)+'<span>'+esc(ev.actor || "导入")+'</span></div><p class="pre">'+esc(ev.note || "")+'</p>'+
       (data.length?'<div class="cell-sub">'+data.map(([k,v])=>esc(keys[k] || k)+" · "+esc(brief(v))).join("　")+'</div>':"")+
       (ev.recorded?'<small class="muted">录入 '+esc(ev.recorded)+'</small>':"")+
-      (ev.id && ev.kind==="meeting"?'<button class="text-btn" type="button" data-correct-event="'+esc(ev.id)+'">更正日期</button>':"")+'</article>';
+      (ev.id && ["meeting","manual_closed"].includes(ev.kind)?'<button class="text-btn" type="button" data-correct-event="'+esc(ev.id)+'">更正日期</button>':"")+'</article>';
   }).join(""):empty("尚无状态记录。","clock"));
   const plans=d.plan_history || [];
   const planLog=plans.length?section("历次实施计划",plans.map(p=>'<article class="time-item"><div class="time-head"><b>'+esc(p.plan)+'</b><span>我方负责人 · '+esc(p.owner || p.tracker || "待分配")+'</span></div><p class="pre">'+esc(p.note)+'</p><small class="muted">'+esc([p.day,p.actor && "记录人 "+p.actor].filter(Boolean).join(" · "))+'</small></article>').join("")):"";
@@ -125,6 +125,8 @@ export async function transition(id){
     onMount(f){
       f.elements.to.addEventListener("change",async()=>{
         const seq=++changeId, selected=f.elements.to.value, target=f.querySelector("[data-transition-fields]"), btn=f.querySelector('[type=submit]');
+        const dayLabel=f.elements.day.closest("label").querySelector("span");
+        dayLabel.firstChild.textContent=selected==="closed"?"客户确认关闭日期":"实际发生日期";
         target.innerHTML=selected?loading():"";btn.disabled=true;
         if(!selected)return;
         try{

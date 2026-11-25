@@ -11,6 +11,30 @@ function withIssues(params, label, cls="text-btn") {
   return '<a class="'+cls+'" href="'+esc(href("issues",params))+'">'+label+'</a>';
 }
 
+// 原生可聚焦滚动区支持滚轮、滚动条和方向键。 / A focusable native region supports wheel, scrollbar and keyboard input.
+function weeklyList(items, heading, renderItem, emptyMessage, emptyIcon) {
+  if (!items.length) return empty(emptyMessage, emptyIcon);
+  return '<div class="overview-scroll" role="region" aria-labelledby="'+heading+'" tabindex="0">'+
+    '<ul class="flow-list">'+items.map(renderItem).join("")+'</ul></div>';
+}
+
+function planItem(item) {
+  const dates = [];
+  if (item.working_since) {
+    dates.push('<span><b>本周开工</b> <time datetime="'+esc(item.working_since)+'">'+esc(item.working_since)+'</time></span>');
+  }
+  // 正式计划可能精确到日或周，也可能落在所选周之外。 / A formal plan can be a date or ISO week outside the selected week.
+  const planLabel = item.is_week_plan ? "本周正式计划" : "正式计划";
+  const planValue = item.plan
+    ? '<time datetime="'+esc(item.plan)+'">'+esc(weekLabel(item.plan))+'</time>' : '待安排';
+  dates.push('<span><b>'+planLabel+'</b> '+planValue+'</span>');
+  const owner = item.is_week_plan ? (item.plan_owner || item.owner) : (item.owner || item.plan_owner);
+  return '<li><div class="flow-line">'+issueLink(item.id,item.number)+'<b>'+esc(item.station)+'</b>'+
+    (item.state ? statePill(item.state,item.state_label) : '')+'</div>'+
+    '<div class="overview-dates">'+dates.join('')+'</div>'+
+    '<div class="flow-detail">'+esc([owner || item.tracker,item.zh || item.problem].filter(Boolean).join(" · "))+'</div></li>';
+}
+
 export function distributionTable(rows, type="area", linkParams={}) {
   if(!rows?.length)return empty("当前筛选范围内没有问题。");
   const typeLabel=type==="area"?"区域":"工位";
@@ -32,11 +56,11 @@ export async function overview(params, signal) {
   const weekLink={week:w,mode:"occurred",scope:"all"};
   const metrics=milestones.map(([k,label,color])=>withIssues({...weekLink,state:k},
     '<span class="metric-caption"><i class="swatch" style="--swatch:'+color+'"></i>'+label+'</span><b class="big-number">'+count(data.counts?.[k])+'</b>',"metric")).join("");
-  const eventList=(data.events || []).slice(0,7);
-  const eventBody=eventList.length?'<ul class="flow-list">'+eventList.map(ev=>
-    '<li><div class="flow-line">'+issueLink(ev.issue_id,ev.number)+statePill(ev.to_state)+'<time class="stamp">'+esc(ev.day)+'</time></div><div class="flow-detail">'+esc([ev.from_state && stateName(ev.from_state)+" → "+stateName(ev.to_state),ev.station,ev.actor,ev.note].filter(Boolean).join(" · "))+'</div></li>').join("")+'</ul>':empty("本周暂无状态变更。","clock");
-  const planList=(data.plans || []).slice(0,6);
-  const planBody=planList.length?'<ul class="flow-list">'+planList.map(it=>'<li><div class="flow-line">'+issueLink(it.id,it.number)+'<b>'+esc(it.station)+'</b><span class="stamp">'+esc(it.plan)+'</span></div><div class="flow-detail">'+esc([it.plan_owner || it.owner || it.tracker,it.zh || it.problem].filter(Boolean).join(" · "))+'</div></li>').join("")+'</ul>':empty("本周暂无已安排的实施计划。","calendar");
+  const eventBody=weeklyList(data.events || [], "weekly-events-title", ev=>
+    '<li><div class="flow-line">'+issueLink(ev.issue_id,ev.number)+statePill(ev.to_state)+'<time class="stamp" datetime="'+esc(ev.day)+'">'+esc(ev.day)+'</time></div><div class="flow-detail">'+esc([ev.from_state && stateName(ev.from_state)+" → "+stateName(ev.to_state),ev.station,ev.actor,ev.note].filter(Boolean).join(" · "))+'</div></li>',
+    "本周暂无状态变更。","clock");
+  const planBody=weeklyList(data.plans || [], "weekly-plans-title", planItem,
+    "本周暂无正式计划或新开工的整改项。","calendar");
   const asof={mode:"asof",scope:"ours",week:w,as_of:data.as_of};
   let deltaLabel="较上周末",deltaValue="缺上周基线";
   if(t.delta!==null && t.delta!==undefined){const change=Number(t.delta);deltaLabel=change<0?"较上周净减少":change>0?"较上周净增加":"较上周净变化";deltaValue=count(Math.abs(change));}
@@ -51,8 +75,8 @@ export async function overview(params, signal) {
   const pending=["clarify_zf","approve_zf","confirm_internal","working","ready"].map(k=>withIssues({...asof,state:k},esc(stateName(k))+" "+count(stocks[k]),"inline-count")).join("");
   return pageTitle("项目概览",(data.start || "")+" 至 "+(data.end || "")+" · "+weekLabel(w),weekTools(w))+
     '<div class="stack"><section class="card"><div class="card-head"><div class="head-area">'+icon("dashboard")+'<h2>本周状态更新</h2></div>'+withIssues(weekLink,"查看本周更新")+'</div><div class="slab">'+metrics+'</div></section>'+
-    '<div class="dashboard-grid"><section class="card"><div class="card-head"><h2>状态变更记录</h2><span class="card-text">'+esc(weekLabel(w))+'</span></div><div class="card-body">'+eventBody+'<div class="hint-row"><small>截至所选日</small>'+pending+'</div></div></section>'+
-    '<section class="card"><div class="card-head"><h2>本周实施计划</h2>'+withIssues({mode:"planned",week:w,scope:"all"},"查看计划")+'</div><div class="card-body">'+planBody+'<div class="hint-row">'+withIssues({mode:"unreported",week:w,scope:"all"},"查看计划中尚未上报的项")+'</div></div></section></div>'+
+    '<div class="dashboard-grid"><section class="card"><div class="card-head"><h2 id="weekly-events-title">状态变更记录</h2><span class="card-text">'+esc(weekLabel(w))+'</span></div><div class="card-body">'+eventBody+'<div class="hint-row"><small>截至所选日</small>'+pending+'</div></div></section>'+
+    '<section class="card"><div class="card-head"><h2 id="weekly-plans-title">本周实施计划与整改</h2>'+withIssues({mode:"planned",week:w,scope:"all"},"查看全部")+'</div><div class="card-body">'+planBody+'<div class="hint-row">'+withIssues({mode:"unreported",week:w,scope:"all"},"查看计划中尚未上报的项")+'</div></div></section></div>'+
     '<section class="card"><div class="card-head"><div class="head-area">'+icon("production")+'<h2>测试线整体情况</h2></div><span class="card-text">截至 '+esc(data.as_of || data.end)+'</span></div>'+overall+
     '<div class="table-caption"><h3>按区域类型</h3></div>'+distributionTable(data.areas,"area",asof)+
     '<details class="collapse"><summary>查看各工位统计</summary>'+distributionTable(data.stations,"station",asof)+'</details></section></div>';

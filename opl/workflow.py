@@ -29,6 +29,8 @@ def allowed(state):
     choices = list(ROUTES[state])
     if state not in (*ARCHIVE, "negotiate"):
         choices.append("negotiate")
+    if state != "closed":
+        choices.append("closed")
     return choices
 
 
@@ -70,6 +72,8 @@ def record_owner(conn, issue_id, local, value, day, actor):
 def form_fields(current, target, local):
     if target not in allowed(current):
         raise ValueError("该问题当前不能切换到所选状态。")
+    if target == "closed":
+        return [field("evidence", "客户确认凭据（如会议纪要编号、邮件主题及确认人）", "textarea")]
     fields = [field("owner", "我方负责人")]
     fields[0]["value"] = issue_owner(local)
     if current in CLARIFY or current == "negotiate":
@@ -158,6 +162,10 @@ def transition(conn, issue_id, data):
             raise ValueError("请填写已知约期或下次跟进日。")
         if payload["resource"] == "物料" and payload["expected"] and not payload["order"]:
             raise ValueError("已确认到货日期的物料还需填写单号。")
+    if target == "closed":
+        # 现场客户确认独立记账；客户原始字段由工作簿维护。 / Record field confirmation separately from workbook facts.
+        append_event(conn, issue_id, current, target, day, actor, "现场确认关闭：" + payload["evidence"], "manual_closed", payload)
+        return
     record_owner(conn, issue_id, local, payload["owner"], day, actor)
     if target == "planned":
         add_plan(conn,issue_id,day,payload["plan"],payload["owner"],payload["note"],actor)
@@ -196,7 +204,7 @@ def correct_event(conn, issue_id, event_id, data):
     for pos,row in enumerate(rows):
         if row["id"] != event_id:
             continue
-        if row["kind"] != "meeting":
+        if row["kind"] not in ("meeting", "manual_closed"):
             raise ValueError("客户版本日期请通过版本记录核对。")
         if (pos and rows[pos-1]["day"] > day) or (pos+1 < len(rows) and rows[pos+1]["day"] < day):
             raise ValueError("更正后日期与前后状态顺序冲突。")

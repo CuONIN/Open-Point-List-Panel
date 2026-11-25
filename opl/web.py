@@ -13,6 +13,7 @@ from flask import Flask, g, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
 
 from . import importer, queries, records, workflow
+from .excel import classify_responsible
 from .store import (ROOT, Conflict, connect, decode, dump, file_hash, initialize, json_hash,
                     need_issue, today, week_of, writing)
 
@@ -87,7 +88,9 @@ def create_app(root=ROOT):
 
     @app.get("/api/config")
     def config():
-        return jsonify(states=workflow.STATES,filters=queries.options(db()),today=today(),week=week_of(today()),
+        filters = queries.options(db())
+        pure_responsibles = [name for name in filters["responsible"] if classify_responsible(name) == "zf"]
+        return jsonify(states=workflow.STATES,filters=filters,pure_responsibles=pure_responsibles,today=today(),week=week_of(today()),
                        translation_enabled=bool(os.environ.get("OPENAI_API_KEY")))
 
     @app.get("/api/overview")

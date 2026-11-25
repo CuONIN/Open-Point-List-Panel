@@ -128,6 +128,26 @@ def target_state(row, current=None):
     return "triage" if current in (*ARCHIVE,None) else current
 
 
+def customer_transition(row, old, issue, version):
+    """客户明确重开时才撤销现场确认。 / Require new reopening evidence before superseding a field-confirmed closure."""
+    target = target_state(row, issue["state"])
+    if issue["reason"] != "manual_closed" or target == "closed":
+        return target
+    confirmed = issue["state_day"]
+    if version < confirmed:
+        return "closed"
+    # 客户仍沿用旧开放值时保留现场凭据；承认之后的状态变更或明确更新日。
+    # A carried-forward open row does not undo confirmation; a subsequent customer status change can.
+    status, previous = norm(row["status"]), norm(old["status"])
+    changed = row.get("changed_on", "")
+    if status not in ("offen", "in arbeit"):
+        return "closed"
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", changed or "") and changed <= version and changed != old.get("changed_on"):
+        return target if changed > confirmed else "closed"
+    explicit_change = status != previous and (previous == "erledigt" or version > confirmed)
+    return target if explicit_change else "closed"
+
+
 def statistics():
     return dict(rows=0,new=0,matched=0,changed=0,closed=0,transferred=0,reopened=0,missing=0,
                 review=0,unchanged=0,translation=0)
@@ -195,8 +215,9 @@ def inspect_import(conn, root, path, filename, version="", revision_no=0):
                 fields = [k for k in row if k!="row" and row[k]!=old.get(k)]
                 item["changes"] = fields
                 summary["changed" if fields else "unchanged"]+=1
-                before = conn.execute("SELECT state FROM issues WHERE id=?",(uid,)).fetchone()[0]
-                after = target_state(row,before)
+                issue = need_issue(conn, uid)
+                before = issue["state"]
+                after = customer_transition(row, old, issue, version)
                 if after != before:
                     if after=="closed": summary["closed"]+=1
                     elif after=="zf_only": summary["transferred"]+=1
@@ -290,7 +311,7 @@ def apply_customer(conn, root, batch, src, info, uid=None, customer=None):
         conn.execute("UPDATE issues SET base=?,customer=?,local=?,last_batch=?,revision=revision+1 WHERE id=?",
                      (base,dump(row),dump(local),batch,uid))
     before = existing["state"]
-    after = target_state(row,before)
+    after = customer_transition(row, old, existing, day)
     if after!=before:
         kind = {"closed":"customer_closed","zf_only":"transferred"}.get(after,"reopened" if before=="closed" else "returned")
         source_day = row.get("changed_on","")

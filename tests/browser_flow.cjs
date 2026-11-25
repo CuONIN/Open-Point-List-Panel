@@ -21,8 +21,94 @@ async function verifyFilterLayers(page, origin) {
     });
   });
   assert.deepEqual(hits, ["menu", "menu"], "Opened filters must receive pointer events over both sticky headers");
+  await picker.locator("input[value=AGV]").uncheck();
   await picker.locator("input[value=AGV]").check();
   assert(await picker.locator("input[value=AGV]").isChecked());
+}
+
+async function verifyExcelFilters(page, origin) {
+  const form=page.locator("#issue-filters"),edit=page.locator("#edit-dialog");
+  const params=()=>new URLSearchParams(new URL(page.url()).hash.split("?")[1]);
+  const picker=k=>form.locator('[data-picker="'+k+'"]');
+  const box=(k,v)=>picker(k).locator('input[type=checkbox][value="'+v+'"]');
+  const rows=()=>page.locator(".desktop-issues tbody .pin1 a").allTextContents();
+  async function reload(action) {
+    const request=page.waitForResponse(r=>new URL(r.url()).pathname==="/api/issues");
+    await action();await (await request).finished();
+    await page.waitForFunction(()=>document.querySelector("#main")?.getAttribute("aria-busy")!== "true");
+  }
+  async function open(k) {
+    const ctl=picker(k);
+    if(!await ctl.isVisible())await form.locator("[data-toggle-filters]").click();
+    if(!await ctl.evaluate(el=>el.open))await ctl.locator("summary").click();
+    return ctl;
+  }
+  const apply=k=>reload(()=>picker(k).locator("[type=submit]").click());
+  const reset=()=>reload(()=>form.locator("[data-reset-filters]").click());
+  await reload(()=>page.goto(origin+"#issues?limit=1"));
+  assert.equal(await picker("area").locator("input:checked").count(),4);
+  assert.equal(await box("state","closed").isChecked(),false);
+  assert.equal(await box("state","zf_only").isChecked(),false);
+  assert.equal(await box("responsible","ZF").isChecked(),false);
+  assert.equal(await box("responsible","HAOSEN / ZF").isChecked(),true);
+  await open("area");await box("area","AGV").uncheck();await apply("area");
+  assert.deepEqual(params().getAll("area"),["S1","S2","General"]);
+  await reload(()=>page.locator('[data-page="2"]').click());
+  assert.equal(params().get("page"),"2");
+  assert.equal(await box("area","AGV").isChecked(),false);
+  const exportURL=page.waitForRequest(r=>new URL(r.url()).pathname==="/api/issues/export.xlsx");
+  const download=page.waitForEvent("download");
+  await page.locator('[data-export="xlsx"]').click();
+  const exported=new URL((await exportURL).url()).searchParams;
+  await download;
+  assert.deepEqual(exported.getAll("area"),params().getAll("area"));
+  assert.equal(exported.has("page"),false);
+  assert.equal(params().get("page"),"2");
+
+  await open("area");await picker("area").locator('[data-pick="none"]').click();await apply("area");
+  assert.deepEqual(params().getAll("area"),["__none__"]);assert.deepEqual(await rows(),[]);
+  await open("area");await picker("area").locator('[data-pick="all"]').click();await apply("area");
+  assert.equal(params().has("area"),false);assert.equal(await picker("area").locator("input:checked").count(),4);
+  await form.locator("input[name=q]").fill("1405a,1405b");
+  await reload(()=>form.locator(".filters-row > button[type=submit]").click());
+  assert.equal(await page.locator(".card-head h2 .tag.num").innerText(),"2");
+  await reset();
+  const cat=await open("category");
+  await cat.locator("[data-option-search]").fill("未填写");
+  await cat.locator('[data-pick="only"]').click();
+  await apply("category");
+  assert.deepEqual(params().getAll("category"),["__blank__"]);
+  await reload(()=>form.locator('[data-scope="all"]').click());
+  assert.deepEqual(new Set(await rows()),new Set(["#16","#18"]));
+  assert(await box("state","closed").isChecked());assert(await box("responsible","ZF").isChecked());
+  await reload(()=>form.locator('[data-scope="customer"]').click());
+  assert(!await box("state","closed").isChecked());assert(await box("state","zf_only").isChecked());
+  assert.deepEqual(await rows(),["#16"]);
+
+  await reset();await open("state");await box("state","closed").check();await apply("state");
+  assert.equal(params().get("scope"),"all");assert(!await box("responsible","ZF").isChecked());
+  assert((await rows()).includes("#18"));assert(!(await rows()).includes("#16"));
+  await open("state");await box("state","zf_only").check();await apply("state");
+  assert(await box("responsible","ZF").isChecked());assert((await rows()).includes("#16"));
+  await reset();const resp=await open("responsible");await resp.locator('[data-pick="none"]').click();
+  await box("responsible","ZF").check();await apply("responsible");
+  assert.equal(params().get("scope"),"all");assert(await box("state","zf_only").isChecked());assert(!await box("state","closed").isChecked());
+  assert.deepEqual(await rows(),["#16"]);
+  const stateButton=page.locator(".desktop-issues .work-cell [data-transition]");
+  const id=await stateButton.getAttribute("data-transition");
+  await stateButton.click();
+  await edit.locator("[name=to]").waitFor();
+  assert.deepEqual(await edit.locator("[name=to] option").evaluateAll(options=>options.map(o=>o.value).filter(Boolean)),["closed"]);
+  await edit.locator("[name=to]").selectOption("closed");
+  await edit.locator("[name=evidence]").waitFor();
+  const required=await edit.locator("[required]").evaluateAll(inputs=>inputs.map(i=>i.name).filter(k=>k!=="to").sort());
+  assert.deepEqual(required,["actor","day","evidence"]);
+  await edit.locator("[name=actor]").fill("现场核查人");
+  await edit.locator("[name=evidence]").fill("客户会议纪要 QA-16，确认人 AL");
+  await edit.locator('[type="submit"]').click();await edit.waitFor({state:"hidden"});
+  const detail=await (await page.request.get(origin+"api/issues/"+id)).json();
+  assert.equal(detail.state,"closed");assert.equal(detail.events[0].actor,"现场核查人");
+  assert(JSON.stringify(detail.events[0]).includes("QA-16"));
 }
 
 async function main() {
@@ -36,6 +122,7 @@ async function main() {
     page.on("pageerror", error => errors.push(error.message));
     const base = origin + "#issues?area=S1&area=S2&sort=number_asc&page=2&limit=1";
     await verifyFilterLayers(page, origin);
+    await verifyExcelFilters(page, origin);
     await page.goto(base);
     const link = page.locator(".desktop-issues [data-issue]").first();
     const id = await link.getAttribute("data-issue");

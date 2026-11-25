@@ -116,6 +116,77 @@ class WorkbenchTests(unittest.TestCase):
         self.assertNotIn("tracker",self.get("config")["filters"])
         self.assertIn("实测完成",self.get("report?week=2025-W02")["text"])
 
+    def test_number_lists_blank_choices_and_export_match_the_grid(self):
+        """核查同号后缀、空选、空值与导出。 / Exercise exact lists, blank selections and printed results."""
+        def numbers(params):
+            return [r["number"] for r in self.client.get("/api/issues", query_string=params).json["items"]]
+        query = {"scope":"all", "q":"#1405， 16,1405A,16,", "sort":"number_asc"}
+        self.assertEqual(numbers(query), ["16","1405a","1405b"])
+        self.assertEqual([r["number"] for r in print_data(self.conn,query)[1]], numbers(query))
+        self.assertEqual(numbers({"scope":"all","q":"1405B, 18"}), ["1405b","18"])
+        self.assertEqual(numbers({"scope":"all","q":"140, 8"}), [])
+        self.assertEqual(numbers({"area":"S2","q":"1405,18"}), ["1405b"])
+        self.assertEqual(numbers({"scope":"all","category":"__blank__"}), ["18","16"])
+        self.assertEqual(len(numbers({"owner":"__blank__"})), 2)
+        for key in ("state","priority","owner","zf"):
+            self.assertEqual(numbers({key:"__none__"}), [])
+        config = self.get("config")
+        self.assertEqual(config["pure_responsibles"], ["ZF"])
+        self.assertIn("__blank__", config["filters"]["owner"])
+        self.assertIn("closed", config["states"])
+
+    def test_weekly_plan_union_uses_latest_state_at_the_week_cutoff(self):
+        """计划与当周进入整改取并集，检查跨周和同日多次流转。 / Combine plans with the latest working state at each cutoff."""
+        self.move("planned", day="2025-01-03", plan="2025-W02", note="本周排期")
+        self.move("working", day="2025-01-06", executor="现场", note="按计划开工")
+        self.change(self.b,"plan",day="2025-01-06",plan="2025-W04",owner="甲",note="原排期")
+        self.change(self.b,"transition",day="2025-01-07",to="working",owner="乙",executor="现场",note="提前开工")
+        weekly = "week=2025-W02"
+        plan = self.get("overview?"+weekly)["plans"]
+        self.assertEqual({r["id"]:(r["is_week_plan"],r["working_since"]) for r in plan},
+                         {self.a:(True,"2025-01-06"),self.b:(False,"2025-01-07")})
+        self.assertEqual(len(plan),2)
+        self.assertEqual(self.get("issues?mode=planned&scope=all&"+weekly)["total"],2)
+        report = self.get("report?"+weekly)["text"]
+        self.assertIn("进入整改 2025-01-07",report)
+        self.assertNotIn("2025-W04",report)
+        self.assertEqual(self.get("overview?week=2025-W03")["plans"],[])
+        self.change(self.b,"transition",day="2025-01-07",to="ready",owner="乙",note="当天已完成")
+        self.assertEqual([r["id"] for r in self.get("overview?"+weekly)["plans"]],[self.a])
+        self.assertEqual(self.get("issues?mode=unreported&"+weekly)["total"],1)
+        self.move("ready", day="2025-01-13",note="下周完成")
+        self.assertEqual(self.get("overview?"+weekly)["plans"][0]["working_since"],"2025-01-06")
+
+    def test_close_with_customer_evidence_then_import_lagging_and_reopening_versions(self):
+        """现场凭据、关闭日和重开的客户依据均保留。 / Preserve field evidence until the customer explicitly reopens."""
+        fields = self.get(f"issues/{self.a}/transition?to=closed")["fields"]
+        self.assertEqual([field["key"] for field in fields], ["evidence"])
+        self.change(self.a,"transition",to="closed",status=400)
+        self.change(self.a,"transition",to="closed",day="2025-01-01",evidence="会议纪要",status=400)
+        self.change(self.a,"transition",to="closed",day="2025-01-08",evidence="ZF 验收纪要 §3")
+        detail = self.get(f"issues/{self.a}")
+        first = detail["events"][0]
+        self.assertEqual((detail["state"],detail["status"],first["day"],first["actor"],first["kind"]),
+                         ("closed","offen","2025-01-08","现场甲","manual_closed"))
+        self.assertEqual(first["payload"]["evidence"],"ZF 验收纪要 §3")
+        self.assertEqual(self.get("issues?state=closed&q=1405")["total"],1)
+        self.assertEqual(self.get("issues?q=1405")["total"],1)
+        self.rows[0][8] = "Updated general note"
+        for day in ("2025-01-07","2025-01-09"):
+            self.rows[0][8] += " +"
+            imported = self.import_version(day,self.rows)
+            self.assertEqual(imported["summary"]["reopened"],0)
+        self.rows[0][-1] = "erledigt"
+        self.assertEqual(self.import_version("2025-01-10",self.rows)["summary"]["closed"],0)
+        self.assertEqual(len(self.get(f"issues/{self.a}")["events"]),2)
+        self.rows[0][-1] = "offen"
+        self.rows[0][8] = "Customer reopened: please repeat the test."
+        self.assertEqual(self.import_version("2025-01-11",self.rows)["summary"]["reopened"],1)
+        self.assertEqual(self.get(f"issues/{self.a}")["state"],"triage")
+        self.assertEqual(self.get("overview?week=2025-W02")["totals"]["closed"],1)
+        pure = self.get("issues?state=zf_only")["items"][0]
+        self.assertEqual(self.get(f"issues/{pure['id']}/transition")["allowed"],["closed"])
+
     def test_customer_versions_links_keep_ids_and_independent_closures(self):
         self.change(self.a,"relations",kind="detail",other=self.b,note="独立验证")
         self.change(self.b,"relations",kind="detail",other=self.a,status=400)

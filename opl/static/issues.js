@@ -19,42 +19,92 @@ function sortButton(params,cls){
 function nameTokens(text){
   return String(text).normalize("NFD").replace(/\p{M}/gu,"").toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 }
-function choice(key){
-  const cfg=context.config;
-  if(key==="state")return Object.entries(cfg.states || {});
-  if(key==="mode")return modes;
-  if(key==="zf")return [["pure","纯 ZF"],["joint","豪森／ZF 共同责任"],["any","所有 ZF 参与"],["none","无 ZF 参与"]];
-  if(key==="area")return ["S1","S2","AGV","General"];
-  if(key==="priority")return ["High","Medium","Low"];
-  return cfg.filters?.[key] || [];
+const BLANK="__blank__", NONE="__none__";
+const stateArchive=new Set(["closed","zf_only"]);
+function pureValues(){
+  return new Set(context.config.pure_responsibles ?? (context.config.filters?.responsible || []).filter(v=>/^zf$/i.test(v)));
 }
-function choicePairs(key){return choice(key).map(x=>Array.isArray(x)?x:[x,x]);}
-function optionLabel(key,v){return choicePairs(key).find(([k])=>String(k)===String(v))?.[1] || v;}
-function selectedSummary(key,vals){return vals.length?(vals.length===1?String(optionLabel(key,vals[0])):"已选 "+vals.length+" 项"):"全部";}
-function multiField(key,label,v){
-  const vals=valuesOf(v), pairs=choicePairs(key);
-  for(const x of vals)if(!pairs.some(([k])=>String(k)===x))pairs.push([x,x]);
-  return '<div class="field multi-field"><span id="label-'+key+'">'+label+'</span><details class="multi-picker" data-picker="'+key+'"><summary aria-labelledby="label-'+key+' value-'+key+'"><span id="value-'+key+'" data-picker-value>'+esc(selectedSummary(key,vals))+'</span>'+icon("down")+'</summary>'+
-    '<div class="multi-menu">'+(key==="author" || pairs.length>9?'<label class="picker-search">'+icon("search")+'<input type="search" data-option-search placeholder="搜索'+esc(label)+(key==="author"?"姓名":"选项")+'" aria-label="搜索'+esc(label)+'选项"></label>':"")+
-    '<div class="multi-choices" role="group" aria-labelledby="label-'+key+'">'+(pairs.length?pairs.map(([value,name])=>'<label class="multi-choice" data-option-label="'+esc(String(name).toLocaleLowerCase())+'"><input type="checkbox" name="'+key+'" value="'+esc(value)+'"'+(vals.includes(String(value))?" checked":"")+'><span>'+esc(name)+'</span></label>').join(""):'<small class="muted">当前无可选值</small>')+'<small class="muted" data-no-options hidden>没有匹配选项</small></div>'+
-    '<div class="picker-foot"><button class="text-btn" type="button" data-clear-picker>清空此项</button><button type="submit" class="btn small-btn primary">应用</button></div></div></details></div>';
+function explicitValues(key,value){
+  const values=valuesOf(value);
+  if(values.includes(NONE))return [];
+  return valuesOf(values.flatMap(v=>key==="zf" && v==="any"?["pure","joint"]:v));
+}
+function scopeOf(p){
+  if(scopes.some(([k])=>k===p.scope))return p.scope;
+  const pure=pureValues();
+  return p.mode==="occurred" || explicitValues("state",p.state).some(s=>stateArchive.has(s)) ||
+    explicitValues("responsible",p.responsible).some(v=>pure.has(v)) || explicitValues("zf",p.zf).includes("pure")?"all":"ours";
+}
+function choices(key,value){
+  const cfg=context.config, actual=cfg.filters?.[key] || [];
+  let entries=actual;
+  if(key==="state")entries=Object.entries(cfg.states || {});
+  if(key==="area")entries=["S1","S2","AGV","General",...actual];
+  if(key==="priority")entries=["High","Medium","Low",...actual];
+  if(key==="zf")entries=[["pure","纯 ZF"],["joint","豪森／ZF 共同责任"],["none","无 ZF 参与"],...actual.filter(v=>v===BLANK)];
+  const result=new Map();
+  const blankLabel=key==="zf"?"待核／未分类":"（未填写）";
+  for(const entry of entries){
+    const [raw,name]=Array.isArray(entry)?entry:[entry,entry],v=String(raw || BLANK);
+    if(v!==NONE)result.set(v,v===BLANK?blankLabel:String(name));
+  }
+  for(const v of explicitValues(key,value))if(!result.has(v))result.set(v,v===BLANK?blankLabel:v);
+  return result;
+}
+function preset(key,all,scope){
+  if(key==="state" && scope!=="all")return all.filter(v=>v!=="closed" && (scope==="customer" || v!=="zf_only"));
+  if(key==="responsible" && scope==="ours"){const pure=pureValues();return all.filter(v=>!pure.has(v));}
+  return [...all];
+}
+function selection(key,p){
+  const options=choices(key,p[key]), all=[...options.keys()];
+  const selected=valuesOf(p[key]).length?explicitValues(key,p[key]):preset(key,all,scopeOf(p));
+  return {options,all,selected};
+}
+function equalSet(a,b){return a.length===b.length && a.every(v=>b.includes(v));}
+function summaryText(selected,options){
+  if(!options.size)return "无可选值";
+  if(!selected.length)return "未选择";
+  if(selected.length===options.size)return "全部";
+  return selected.length===1?options.get(selected[0]):"已选 "+selected.length+" / "+options.size;
+}
+function multiField(key,label,p){
+  const {options,selected}=selection(key,p), pure=pureValues();
+  const rows=[...options].map(([value,name])=>{
+    const note=key==="state" && stateArchive.has(value)?"归档":key==="responsible" && pure.has(value)?"纯 ZF":"";
+    return '<label class="multi-choice" data-option-label="'+esc(name.toLocaleLowerCase())+'"><input type="checkbox" name="'+key+'" value="'+esc(value)+'"'+(selected.includes(value)?" checked":"")+'><span>'+esc(name)+'</span>'+(note?'<small>'+esc(note)+'</small>':"")+'</label>';
+  }).join("");
+  return '<div class="field multi-field"><span id="label-'+key+'">'+label+'</span><details class="multi-picker" data-picker="'+key+'"><summary aria-labelledby="label-'+key+' value-'+key+'"><span id="value-'+key+'" data-picker-value>'+esc(summaryText(selected,options))+'</span>'+icon("down")+'</summary>'+
+    '<div class="multi-menu"><label class="picker-search">'+icon("search")+'<input type="search" data-option-search placeholder="搜索'+esc(label)+(key==="author"?"姓名":"选项")+'" aria-label="搜索'+esc(label)+'选项"></label>'+
+    '<div class="picker-actions"><button type="button" class="text-btn" data-pick="all">全选</button><button type="button" class="text-btn" data-clear-picker data-pick="none">取消全选</button><button type="button" class="text-btn" data-pick="only" hidden>仅选匹配</button></div>'+
+    '<div class="multi-choices" role="group" aria-labelledby="label-'+key+'">'+rows+'<small class="muted" data-no-options'+(options.size?" hidden":"")+'>'+(options.size?"没有匹配选项":"当前无可选值")+'</small></div>'+
+    '<div class="picker-foot"><small data-picker-count aria-live="polite"></small><button type="submit" class="btn small-btn primary">应用</button></div></div></details></div>';
+}
+function filterChip(key,value,label,action="remove"){
+  return '<button type="button" class="filter-chip" data-remove-filter="'+esc(key)+'" data-filter-value="'+esc(value)+'" data-chip-action="'+action+'" aria-label="'+esc((action==="restore"?"恢复包含 ":action==="reset"?"清除筛选 ":"移除 ")+label)+'">'+esc(label)+icon("x")+'</button>';
+}
+function chipsFor(key,raw,p){
+  if(!labels[key])return "";
+  if(!multiKeys.has(key)){
+    const label=key==="mode"?(modes.find(([v])=>v===raw)?.[1] || raw):raw;
+    return key==="mode" && raw==="current"?"":filterChip(key,raw,labels[key]+" · "+label);
+  }
+  const {all,selected,options}=selection(key,p);
+  if(!selected.length)return filterChip(key,NONE,labels[key]+" · 未选择","reset");
+  const excluded=all.filter(v=>!selected.includes(v));
+  if(!excluded.length)return "";
+  const inverse=excluded.length<selected.length;
+  return (inverse?excluded:selected).map(v=>filterChip(key,v,labels[key]+" · "+(inverse?"排除 ":"")+options.get(v),inverse?"restore":"remove")).join("");
 }
 function filters(p){
   const hasAdvanced=advancedOpen || advanced.some(([k])=>valuesOf(p[k]).length) || (!!p.mode && p.mode!=="current") || Boolean(p.as_of);
-  const includesArchive=valuesOf(p.state).some(s=>s==="closed" || s==="zf_only");
-  const scope=p.scope || (p.mode==="occurred" || includesArchive?"all":"ours");
-  const chips=Object.entries(p).flatMap(([k,input])=>{
-    if(!labels[k])return [];
-    return valuesOf(input).filter(v=>!(k==="mode" && v==="current")).map(v=>{
-      const display=String(optionLabel(k,v));
-      return '<button type="button" class="filter-chip" data-remove-filter="'+esc(k)+'" data-filter-value="'+esc(v)+'" aria-label="移除'+esc(labels[k])+' '+esc(display)+'">'+esc(labels[k])+' · '+esc(display)+icon("x")+'</button>';
-    });
-  }).join("");
-  return '<form class="card filters" id="issue-filters"><input type="hidden" name="scope" value="'+esc(p.scope || "")+'"><div class="filters-row"><div class="segment" aria-label="问题范围">'+scopes.map(([k,label])=>'<button type="button" data-scope="'+k+'" aria-pressed="'+(k===scope)+'">'+label+'</button>').join("")+'</div>'+
-    '<label class="search-box">'+icon("search")+'<input type="search" name="q" value="'+esc(p.q)+'" aria-label="搜索问题" placeholder="编号、提出者、工位或问题关键词"></label><button class="btn primary" type="submit">应用筛选</button></div>'+
-    '<div class="filters-row">'+multiField("area","区域",p.area)+multiField("state","我方状态",p.state)+multiField("priority","优先级",p.priority)+
+  const scope=scopeOf(p);
+  const chips=Object.entries(p).map(([k,v])=>chipsFor(k,v,p)).join("");
+  return '<form class="card filters" id="issue-filters"><div class="filters-row"><div class="segment" aria-label="问题范围">'+scopes.map(([k,label])=>'<button type="button" data-scope="'+k+'" aria-pressed="'+(k===scope)+'">'+label+'</button>').join("")+'</div>'+
+    '<label class="search-box">'+icon("search")+'<input type="search" name="q" value="'+esc(p.q)+'" aria-label="搜索问题" placeholder="客户号（多个用逗号分隔）、姓名或关键词"></label><button class="btn primary" type="submit">应用筛选</button></div>'+
+    '<div class="filters-row">'+multiField("area","区域",p)+multiField("state","我方状态",p)+multiField("priority","优先级",p)+
     '<button type="button" class="btn" data-toggle-filters aria-expanded="'+hasAdvanced+'">'+icon("filter")+'更多筛选</button><button type="button" class="text-btn" data-reset-filters>'+icon("reset")+'恢复默认筛选</button><small class="muted">同类选项取任一，跨类同时匹配</small></div>'+
-    '<div class="filters-grid" id="advanced-filters"'+(hasAdvanced?"":" hidden")+'>'+advanced.map(([k,l])=>multiField(k,l,p[k])).join("")+
+    '<div class="filters-grid" id="advanced-filters"'+(hasAdvanced?"":" hidden")+'>'+advanced.map(([k,l])=>multiField(k,l,p)).join("")+
     '<label class="field">周筛选口径<select name="mode">'+options(modes,p.mode || "current")+'</select></label><label class="field">统计周<input type="week" name="week" value="'+esc(p.week || context.config.week)+'"></label><label class="field">截止日<input type="date" name="as_of" value="'+esc(p.as_of)+'"></label></div>'+
     (chips?'<div class="filter-chips">'+chips+'</div>':"")+'</form>';
 }
@@ -70,7 +120,7 @@ function fieldWork(it){
   const related=[...links.values()];
   const allLinks='<span class="related-links">'+related.join(" ")+'</span>';
   const list=related.length>4?'<details><summary>共 '+related.length+' 条</summary>'+allLinks+'</details>':allLinks;
-  const status=["closed","zf_only"].includes(it.state)
+  const status=it.state==="closed"
     ? '<button type="button" class="archived-state" data-issue="'+esc(it.id)+'" title="查看归档问题详情">'+statePill(it.state,it.state_label)+'</button>'
     : statePill(it.state,it.state_label,it.id);
   return '<div class="field-work"><div class="work-status">'+status+'<span>状态日 <time>'+esc(it.state_day || "—")+'</time></span></div>'+
@@ -93,7 +143,7 @@ function mobile(it){
     '<p class="cell-sub">客户提出者 · '+esc(it.author || "—")+'</p><p class="cell-sub">客户责任方 · '+esc(it.responsible || "待核")+(it.due?"　截止 "+esc(it.due):"")+'</p>'+fieldWork(it)+'</article>';
 }
 export async function issues(params,signal){
-  const res=await api("issues"+qs(params),{signal}), items=res.items || [];
+  const res=await api("issues"+qs({...params,scope:scopeOf(params)}),{signal}), items=res.items || [];
   const page=Number(res.page || 1),pages=Math.max(1,Number(res.pages || 1));
   const table=items.length?'<div class="table-scroll desktop-issues" tabindex="0" aria-label="双语问题表，可横向滚动"><table class="issue-table"><colgroup>'+[81,174,225,230,90,140,184,158,150,300].map(w=>'<col style="width:'+w+'px">').join("")+'</colgroup><thead><tr><th class="pin1" aria-sort="'+(numberSort(params)==="number_asc"?"ascending":"descending")+'">'+sortButton(params,"sort-head")+'</th><th class="pin2">工位／设备</th><th>问题中文</th><th>英文／客户原文</th><th>优先级</th><th>客户提出者</th><th>最近反馈／行动</th><th>客户部门／类别</th><th>客户责任方／截止</th><th>现场处理</th></tr></thead><tbody>'+items.map(row).join("")+'</tbody></table></div><div class="issue-list-mobile">'+items.map(mobile).join("")+'</div>':empty("当前筛选没有匹配的问题。可调整条件或恢复默认筛选。","search");
   const dispatch='<div class="tools export-tools">'+sortButton(params,"btn small-btn mobile-sort")+
@@ -105,7 +155,7 @@ export async function issues(params,signal){
     '<section class="card"><details class="collapse"><summary>查看本次筛选的工位统计</summary>'+distributionTable(res.stations || [],"station",params)+'</details></section></div>';
 }
 function queryForExport(params,orientation,layout) {
-  const values={...params,sort:numberSort(params),orientation,layout};delete values.page;delete values.limit;delete values.issue;return qs(values);
+  const values={...params,scope:scopeOf(params),sort:numberSort(params),orientation,layout};delete values.page;delete values.limit;delete values.issue;return qs(values);
 }
 async function download(format,params,node){
   if(node.dataset.exporting || !["xlsx","pdf"].includes(format))return;
@@ -143,15 +193,54 @@ export function positionOpenFilter(){
   picker.style.setProperty("--menu-shift",Math.max(12-left,Math.min(0,window.innerWidth-12-left-menu.offsetWidth))+"px");
   picker.classList.toggle("menu-above",below<menu.offsetHeight+10 && above>below);
 }
+// 调整范围时，只解除和用户新勾选项冲突的默认排除项。 / Relax paired defaults when an archived choice is added deliberately.
+function buildSelection(source, models, checked, mode, switchScope){
+  let scope=switchScope || scopeOf(source);
+  const state=models.state, resp=models.responsible, pure=pureValues();
+  const states=checked.state, owners=checked.responsible;
+  const changed=key=>!equalSet(checked[key],models[key].selected);
+  if(switchScope || (!source.scope && mode==="occurred" && source.mode!=="occurred")){
+    if(!switchScope)scope="all";
+    for(const key of ["state","responsible"]){
+      if(switchScope || (!source[key] && !changed(key)))checked[key]=preset(key,models[key].all,scope);
+    }
+  }else{
+    const addedState=v=>states.includes(v) && !state.selected.includes(v);
+    const addedPure=owners.some(v=>pure.has(v) && !resp.selected.includes(v));
+    const requestedZF=changed("zf") && checked.zf.includes("pure") && !equalSet(checked.zf,models.zf.all);
+    const transfer=addedState("zf_only"), closed=addedState("closed");
+    if((transfer || requestedZF) && !changed("responsible") && equalSet(owners,preset("responsible",resp.all,"ours")))checked.responsible=[...resp.all];
+    const active=state.all.filter(v=>!stateArchive.has(v));
+    if((addedPure || requestedZF) && !changed("state") && !states.includes("zf_only") && active.every(v=>states.includes(v))){
+      checked.state=state.all.filter(v=>v==="zf_only" || states.includes(v));
+    }
+    if(transfer || closed || addedPure || requestedZF)scope="all";
+  }
+  const result={scope};
+  for(const key of multiKeys){
+    const all=models[key].all, selected=checked[key];
+    if(!all.length && !source[key])continue;
+    if(equalSet(selected,preset(key,all,scope)) && (selected.length || switchScope || !source[key]))continue;
+    result[key]=selected.length?selected:[NONE];
+  }
+  return result;
+}
 export function bindIssues(node,params){
   const form=node.querySelector("#issue-filters");
   const source={...params};delete source.issue;
+  const models=Object.fromEntries([...multiKeys].map(k=>[k,selection(k,source)]));
   node.querySelector("[data-orientation]").onchange=e=>{exportOrientation=e.target.value==="landscape"?"landscape":"portrait";};
   node.querySelector("[data-layout]").onchange=e=>{exportLayout=e.target.value==="bilingual"?"bilingual":"field";};
   function refreshPicker(picker){
-    const vals=picked(picker);
-    picker.querySelector("[data-picker-value]").textContent=selectedSummary(picker.dataset.picker,vals);
-    picker.querySelector("summary").classList.toggle("picked",vals.length>0);
+    const selected=picked(picker), opts=models[picker.dataset.picker].options;
+    picker.querySelector("[data-picker-value]").textContent=summaryText(selected,opts);
+    picker.querySelector("[data-picker-count]").textContent="已选 "+selected.length+" / "+opts.size+" 项";
+    picker.querySelector("summary").classList.toggle("picked",selected.length!==opts.size);
+    const visible=[...picker.querySelectorAll(".multi-choice:not([hidden]) input")];
+    const searching=!!picker.querySelector("[data-option-search]").value.trim();
+    const allBtn=picker.querySelector('[data-pick="all"]'),noneBtn=picker.querySelector('[data-pick="none"]'),onlyBtn=picker.querySelector('[data-pick="only"]');
+    allBtn.textContent=searching?"全选匹配":"全选";noneBtn.textContent=searching?"取消匹配":"取消全选";onlyBtn.hidden=!searching;
+    allBtn.disabled=!visible.length;noneBtn.disabled=!visible.length;onlyBtn.disabled=!visible.length;
   }
   for(const picker of form.querySelectorAll("[data-picker]")){
     refreshPicker(picker);
@@ -161,12 +250,10 @@ export function bindIssues(node,params){
       positionOpenFilter();
     });
   }
-  function applyFilters(){
-    const fd=new FormData(form),next={};
-    for(const key of multiKeys){
-      const selected=valuesOf(fd.getAll(key));if(selected.length)next[key]=selected;
-    }
-    for(const k of ["scope","q","mode","week","as_of"]){
+  function applyFilters(switchScope){
+    const fd=new FormData(form),checked=Object.fromEntries([...multiKeys].map(k=>[k,valuesOf(fd.getAll(k))]));
+    const next=buildSelection(source,models,checked,fd.get("mode"),switchScope);
+    for(const k of ["q","mode","week","as_of"]){
       const v=String(fd.get(k) || "").trim();
       if(v && !(k==="mode" && v==="current"))next[k]=v;
     }
@@ -194,26 +281,32 @@ export function bindIssues(node,params){
       if(!opt.hidden)match++;
     }
     picker.querySelector("[data-no-options]").hidden=match>0;
+    refreshPicker(picker);
   });
   node.onclick=e=>{
     const active=e.target.closest("[data-picker]");
     for(const picker of form.querySelectorAll("[data-picker][open]"))if(picker!==active)picker.open=false;
     const el=e.target.closest("button");if(!el)return;
-    if(el.hasAttribute("data-clear-picker")){
+    if(el.dataset.pick){
       const picker=el.closest("[data-picker]");
-      picker.querySelectorAll('input[type="checkbox"]:checked').forEach(x=>{x.checked=false;});refreshPicker(picker);
-    }else if(el.hasAttribute("data-toggle-filters")) {
+      for(const option of picker.querySelectorAll(".multi-choice")){
+        if(!option.hidden || el.dataset.pick==="only")option.querySelector("input").checked=!option.hidden && el.dataset.pick!=="none";
+      }
+      refreshPicker(picker);
+    }else if(el.hasAttribute("data-toggle-filters")){
       const area=form.querySelector("#advanced-filters");area.hidden=!area.hidden;advancedOpen=!area.hidden;el.setAttribute("aria-expanded",String(!area.hidden));
-    }else if(el.hasAttribute("data-reset-filters")) { advancedOpen=false;go("issues"); }
-    else if(el.dataset.scope) {form.elements.scope.value=el.dataset.scope;applyFilters();}
+    }else if(el.hasAttribute("data-reset-filters")){advancedOpen=false;go("issues");}
+    else if(el.dataset.scope)applyFilters(el.dataset.scope);
     else if(el.dataset.removeFilter){
-      const next={...source}, k=el.dataset.removeFilter;
-      if(multiKeys.has(k)){
-        const remains=valuesOf(next[k]).filter(v=>v!==el.dataset.filterValue);
-        if(remains.length)next[k]=remains;else delete next[k];
-      }else delete next[k];
+      const k=el.dataset.removeFilter,next={...source};delete next[k];delete next.page;
+      if(multiKeys.has(k) && el.dataset.chipAction!=="reset"){
+        const value=el.dataset.filterValue, checked=Object.fromEntries([...multiKeys].map(key=>[key,[...models[key].selected]]));
+        checked[k]=el.dataset.chipAction==="restore"?valuesOf([...checked[k],value]):checked[k].filter(v=>v!==value);
+        for(const key of multiKeys)delete next[key];
+        Object.assign(next,buildSelection(source,models,checked,source.mode));
+      }
       if(k==="mode"){delete next.week;delete next.event_kind;}
-      delete next.page;go("issues",next);
+      go("issues",next);
     }else if(el.dataset.page)go("issues",{...source,page:el.dataset.page});
     else if(el.hasAttribute("data-toggle-sort")){
       const next={...source,sort:numberSort(source)==="number_asc"?"number_desc":"number_asc"};delete next.page;go("issues",next);

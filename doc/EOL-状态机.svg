@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1320" height="1005" viewBox="0 0 1320 1005" role="img" aria-labelledby="title description">
 <title id="title">EOL 问题状态机</title>
-<desc id="description">现场会议推动排期、开工、完成和上报。核查退回进入需返工。澄清、等待和谈判有独立状态。客户正式版触发客户关闭、转纯 ZF、重开和责任转回。配套开发设计文档的第 2 节列出全部后继和触发条件。</desc>
+<desc id="description">现场会议推动排期、开工、完成和上报。核查退回进入需返工。澄清、等待和谈判有独立状态。现场可持客户凭据关闭；客户正式版触发关闭、转纯 ZF、重开和责任转回。配套开发设计文档的第 2 节列出全部后继和触发条件。</desc>
 <defs>
  <marker id="flow" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#426e6b"/></marker>
  <marker id="return" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#986635"/></marker>
@@ -21,7 +21,7 @@
 </defs>
 <rect width="1320" height="1005" fill="#f3f6f7"/>
 <text x="43" y="55" class="title" >EOL 问题状态机</text>
-<text x="45" y="83" class="note" >会议记录我方进度。客户新版提供归档和恢复跟踪的依据。</text>
+<text x="45" y="83" class="note" >会议记录我方进度和客户确认。客户新版记录归档和恢复跟踪。</text>
 <text x="1273" y="57" class="tag" text-anchor="end">ZF Saarbrücken   /   EOL</text>
 <rect x="25" y="102" width="1270" height="254" rx="16" fill="#ffffff" stroke="#d5dfe2" stroke-width="1.5"/>
 <text x="50" y="137" class="head" >现场主流程</text>
@@ -67,13 +67,13 @@
 <text x="914" y="587" class="body" >→ 待梳理</text>
 <text x="54" y="642" class="note" >可转入各分支的起点、切换澄清对象及上报前补做等完整路径，见开发设计中的人工流转矩阵。</text>
 <rect x="25" y="676" width="1270" height="300" rx="16" fill="#ffffff" stroke="#d5dfe2" stroke-width="1.5"/>
-<text x="50" y="713" class="head" >客户版本触发</text>
-<text x="260" y="711" class="note" >按生效版本判断，客户正式关闭优先。</text>
-<text x="59" y="765" class="body" >客户标为 erledigt</text>
+<text x="50" y="713" class="head" >关闭与责任转移</text>
+<text x="260" y="711" class="note" >现场可登记客户确认，客户版本可触发关闭或重开。</text>
+<text x="59" y="765" class="body" >现场取得客户确认／客户表标为 erledigt</text>
 <path d="M 433 759 H 495" class="link" marker-end="url(#flow)"/>
 <rect x="505" y="740" width="222" height="39" rx="8" fill="#eff5f5" stroke="#b8cccd" stroke-width="1.5"/>
 <text x="616" y="765" class="cardhead" text-anchor="middle">客户已关闭</text>
-<text x="763" y="765" class="note" >记录来源版本、客户日期或首次观察日期。</text>
+<text x="763" y="765" class="note" >记录确认凭据、日期和记录人，或客户来源版本。</text>
 <text x="59" y="819" class="body" >客户仍开放，责任方只有 ZF</text>
 <path d="M 433 813 H 495" class="link" marker-end="url(#flow)"/>
 <rect x="505" y="794" width="222" height="39" rx="8" fill="#eff5f5" stroke="#b8cccd" stroke-width="1.5"/>
@@ -84,5 +84,5 @@
 <rect x="505" y="848" width="222" height="39" rx="8" fill="#eff5f5" stroke="#b8cccd" stroke-width="1.5"/>
 <text x="616" y="873" class="cardhead" text-anchor="middle">待梳理</text>
 <text x="763" y="873" class="note" >写入重开或转回事件，沿用问题和历史。</text>
-<text x="55" y="936" class="note" >仅有 offen 与 in Arbeit 互换时，保存客户字段变化。我方正式状态由会议继续维护。</text>
+<text x="55" y="936" class="note" >沿用旧开放值的客户表保留现场关闭；客户明确重开时恢复跟踪。</text>
 </svg>

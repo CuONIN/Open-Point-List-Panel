@@ -125,7 +125,7 @@ export function statePill(key,label,issueId) {
   const [ink,bg]=shades[key]||shades.triage;
   const style=' style="--state-ink:'+ink+';--state-bg:'+bg+'"';
   const name=esc(stateName(key,label));
-  return issueId && !["closed","zf_only"].includes(key)
+  return issueId && key!=="closed"
     ? '<button class="state-btn" type="button" data-transition="'+esc(issueId)+'"'+style+' title="更改我方状态">'+name+icon("down")+'</button>'
     : '<span class="pill"'+style+'>'+name+'</span>';
 }

@@ -33,8 +33,9 @@ def run():
         thread = Thread(target=server.run, daemon=True)
         thread.start()
         try:
-            subprocess.run([os.environ.get("OPL_TEST_NODE","node"), str(ROOT/"tests"/"browser_flow.cjs"),
-                            f"http://127.0.0.1:{server.effective_port}/"], check=True, timeout=120)
+            for script in ("browser_flow.cjs", "browser_overview.cjs"):
+                subprocess.run([os.environ.get("OPL_TEST_NODE","node"), str(ROOT/"tests"/script),
+                                f"http://127.0.0.1:{server.effective_port}/"], check=True, timeout=120)
         finally:
             server.close()
             thread.join(timeout=3)

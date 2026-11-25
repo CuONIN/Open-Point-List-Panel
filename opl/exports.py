@@ -2,10 +2,10 @@
 
 # SQLite window functions select a single latest action per issue. / SQLite 窗口函数为每个问题选取最近行动。
 from .excel import split_actions
-from .queries import MULTI_FIELDS, filtered_issues, selected
+from .queries import BLANK, NO_SELECTION, MULTI_FIELDS, filtered_issues, scope_for, selected
 from .stations import station_label
 from .store import today
-from .workflow import ARCHIVE, STATES
+from .workflow import STATES
 
 LABELS = {
     "station":"工位", "machine":"机器号", "avo":"AVO", "area":"区域", "author":"客户提出者",
@@ -26,14 +26,12 @@ MODES = {"current": "当前状态", "occurred": "期间进入过", "latest": "�
          "asof": "截至所选日", "planned": "本周实施计划", "unreported": "本周计划尚未上报"}
 ZF = {"pure": "纯 ZF", "joint": "豪森与 ZF 共同责任", "any": "所有 ZF 参与", "none": "无 ZF 参与"}
 EVENTS = {"baseline": "建账基线", "new": "新增", "meeting": "现场确认", "reopened": "客户重开",
-          "returned": "责任转回", "customer_closed": "客户关闭", "transferred": "转纯 ZF"}
+          "returned": "责任转回", "manual_closed": "现场确认关闭", "customer_closed": "客户关闭", "transferred": "转纯 ZF"}
 
 
 def filter_caption(params, cutoff, total):
-    states = selected(params, "state")
     mode = params.get("mode") or "current"
-    default_scope = "all" if mode == "occurred" or set(states).intersection(ARCHIVE) else "ours"
-    parts = [SCOPES.get(params.get("scope") or default_scope, "全部"), MODES.get(mode, mode)]
+    parts = [SCOPES.get(scope_for(params), "全部"), MODES.get(mode, mode)]
     for key in (*MULTI_FIELDS, "q", "week", "as_of", "event_kind"):
         values = selected(params, key)
         if key == "owner":
@@ -41,7 +39,8 @@ def filter_caption(params, cutoff, total):
         if key == "station":
             values = tuple(dict.fromkeys(station_label(v) for v in values))
         if values:
-            names = {"state": STATES, "zf": ZF, "event_kind": EVENTS}.get(key, {})
+            names = {BLANK: "（空白或待核）", NO_SELECTION: "（未勾选）",
+                     **{"state": STATES, "zf": ZF, "event_kind": EVENTS}.get(key, {})}
             parts.append(f"{LABELS[key]}　" + " 或 ".join(names.get(v, v) for v in values))
     order = "编号升序" if params.get("sort") == "number_asc" else "编号降序"
     return " · ".join([*parts, order, f"截至 {cutoff}", f"共 {total} 条"])
