@@ -84,6 +84,12 @@ async function main() {
     const changes = page.getByRole("region", {name:"状态变更记录"});
     const agenda = page.getByRole("region", {name:"本周实施计划与整改"});
     await agenda.waitFor();
+    for (const link of await page.locator("a.metric").all()) {
+      const query = new URLSearchParams((await link.getAttribute("href")).split("?")[1]);
+      assert.equal(query.get("mode"), "latest");
+      assert.equal(query.get("week"), week);
+      assert.equal(query.get("scope"), "all");
+    }
     assert.equal(await changes.getByRole("listitem").count(), events.length);
     assert.equal(await agenda.getByRole("listitem").count(), plans.length);
     const items = agenda.getByRole("listitem");

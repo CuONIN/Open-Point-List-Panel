@@ -6,6 +6,18 @@ async function verifyFilterLayers(page, origin) {
   await page.goto(origin + "#issues");
   const table = page.locator(".desktop-issues"), picker = page.locator("[data-picker=area]");
   await table.locator("tbody tr").first().waitFor();
+  const search = page.getByRole("searchbox", {name:"搜索问题", exact:true});
+  for (const width of [375, 1440]) {
+    await page.setViewportSize({width, height:900});
+    await search.fill("1405a,1405b");
+    assert(await search.evaluate(input => {
+      const icon = input.closest("label").querySelector("svg").getBoundingClientRect();
+      const style = getComputedStyle(input);
+      const textLeft = input.getBoundingClientRect().left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft);
+      return icon.right + 4 <= textLeft;
+    }), "The magnifier must leave room before the first typed character");
+  }
+  await search.fill("");
   await picker.locator("summary").click();
   await table.evaluate(el => {el.scrollLeft = 140; el.scrollTop = 55;});
   await page.evaluate(() => window.scrollBy(0, 40));

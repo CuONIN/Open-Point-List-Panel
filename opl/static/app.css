@@ -192,8 +192,8 @@ main{max-width:1800px;margin:0 auto;padding:26px clamp(16px,2.6vw,42px) 42px;out
 .review-choices legend{padding:0 5px;font-size:.86rem;font-weight:600}
 .filters-row{display:flex;align-items:end;gap:10px}
 .search-box{position:relative;flex:1;min-width:190px}
-.search-box svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--quiet);width:16px}
-.search-box input{padding-left:34px;width:100%}
+.search-box svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--quiet);width:16px;pointer-events:none}
+.search-box input[type=search]{padding-inline-start:34px;width:100%}
 .segment{display:flex;flex-wrap:wrap;align-items:center;padding:3px;background:#eef3f1;border-radius:7px;gap:2px}
 .segment button{border-radius:5px;font-size:.84rem;font-weight:560;padding:6px 9px;color:#52686a}
 .segment button[aria-pressed=true]{background:white;color:var(--primary-dark);box-shadow:0 1px 3px #293a3e26}

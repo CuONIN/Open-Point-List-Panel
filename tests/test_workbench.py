@@ -74,6 +74,26 @@ class WorkbenchTests(unittest.TestCase):
     def move(self, to, day="2025-01-06", **fields):
         self.change(self.a, "transition", day, to=to, owner="李工", **fields)
 
+    def test_overview_latest_state_after_customer_archive_import(self):
+        """概览按截止日归类，保留此前流转。 / Classify by latest state while preserving prior transitions."""
+        self.move("working", executor="电工", note="开工")
+        self.change(self.b, "transition", to="ready", owner="李工", note="完成待报")
+        self.rows[0][-1] = "erledigt"
+        self.rows[1][9] = "ZF"
+        self.import_version("2025-01-08", self.rows)
+        summary = self.get("overview?week=2025-W02")
+        for state, ids in (("working", []), ("ready", []), ("closed", [self.a]), ("zf_only", [self.b])):
+            with self.subTest(state=state):
+                query = {"week":"2025-W02", "mode":"latest", "scope":"all", "state":state}
+                rows = self.client.get("/api/issues", query_string=query).json["items"]
+                self.assertEqual([r["id"] for r in rows], ids)
+                self.assertTrue(all(r["state"] == state for r in rows))
+                self.assertEqual(summary["counts"][state], len(ids))
+                self.assertEqual([r["id"] for r in print_data(self.conn, query)[1]], ids)
+        before = self.get("overview?week=2025-W02&as_of=2025-01-07")["counts"]
+        self.assertEqual((before["working"], before["ready"], before["closed"], before["zf_only"]), (1,1,0,0))
+        self.assertEqual({e["to_state"] for e in summary["events"]}, {"working","ready","closed","zf_only"})
+
     def test_scopes_multiple_tags_and_whole_filtered_export(self):
         self.assertEqual(self.get("issues")["total"], 2)
         self.assertEqual(self.get("issues?scope=customer")["total"], 3)

@@ -53,7 +53,7 @@ export async function overview(params, signal) {
   const week=params.week || context.config.week;
   const data=await api("overview"+qs({week}),{signal});
   const w=data.week || week, stocks=data.stocks || {}, t=data.totals || {};
-  const weekLink={week:w,mode:"occurred",scope:"all"};
+  const weekLink={week:w,mode:"latest",scope:"all"};
   const metrics=milestones.map(([k,label,color])=>withIssues({...weekLink,state:k},
     '<span class="metric-caption"><i class="swatch" style="--swatch:'+color+'"></i>'+label+'</span><b class="big-number">'+count(data.counts?.[k])+'</b>',"metric")).join("");
   const eventBody=weeklyList(data.events || [], "weekly-events-title", ev=>

@@ -142,6 +142,11 @@ def week_context(params):
     return week,start,end,cutoff
 
 
+def latest_changes(rows, start, end):
+    """按统计截止日的最后一次状态变更归类。 / Use the effective latest transition, not every event in the week."""
+    return [row for row in rows if row["state_kind"] != "baseline" and start <= row["state_day"] <= end]
+
+
 def scheduled(row,week):
     plan=row["plan"]
     return bool(plan) and (plan==week if "-W" in plan else week_of(plan)==week)
@@ -260,7 +265,7 @@ def filtered_issues(conn, params, *, source=False):
     elif states:
         rows = [r for r in rows if r["state"] in states]
     if mode == "latest":
-        rows = [r for r in rows if r["state_kind"] != "baseline" and start <= r["state_day"] <= min(end, cutoff)]
+        rows = latest_changes(rows, start, min(end, cutoff))
     if mode in ("planned", "unreported"):
         rows = weekly_work(rows, week, start, min(end, cutoff))
         if mode == "unreported":
@@ -363,6 +368,7 @@ def overview(conn,params):
         current_events.append({**event_view(e),"number":item["number"],"station":item["station"],"owner":item["owner"]})
         per_state[e["to_state"]].add(e["issue_id"])
         per_reason[e["kind"]].add(e["issue_id"])
+    latest_counts = Counter(row["state"] for row in latest_changes(rows, start, min(end, cutoff)))
     plans = weekly_work(rows, week, start, min(end, cutoff))
     plans.sort(key=lambda r: (r["plan"] if r["is_week_plan"] else r["working_since"], r["number"]))
     return dict(week=week,start=start,end=end,as_of=cutoff,
@@ -371,7 +377,7 @@ def overview(conn,params):
                             reopened=len(per_reason["reopened"]|per_reason["returned"]),
                             returned=len(per_reason["returned"]),closed=len(per_state["closed"]),transferred=len(per_state["zf_only"])),
                 areas=group_by(active,"area"),stations=group_by(active,"station"),
-                counts={s:len(per_state[s]) for s in STATES},stocks=dict(Counter(r["state"] for r in rows)),
+                counts={s:latest_counts[s] for s in STATES},stocks=dict(Counter(r["state"] for r in rows)),
                 events=current_events,plans=plans,baseline=first)
 
 
