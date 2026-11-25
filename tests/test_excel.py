@@ -126,6 +126,8 @@ class TextAndStationTests(unittest.TestCase):
         self.assertTrue(stations.resolve("2482-1260")["station_review"])
         self.assertTrue(stations.resolve("AVO6500")["station_review"])
         self.assertEqual(stations.resolve("24821221")["station"], "AGV 二期")
+        self.assertEqual(stations.resolve("AGV 1221")["machine"], "24821221")
+        self.assertEqual(stations.resolve("1220")["machine"], "24821220")
         self.assertEqual(stations.resolve("AVO5710 AGV")["area"], "AGV")
         self.assertEqual(stations.resolve("Automatic Stations General")["station"], "General")
         self.assertEqual(classify_responsible(" zF / ZF "), "zf")

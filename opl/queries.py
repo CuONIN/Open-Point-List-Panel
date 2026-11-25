@@ -8,7 +8,7 @@ import re
 
 from .excel import classify_responsible
 from .people import customer_author, internal_owner
-from .stations import station_label
+from .stations import short_agv_machine, station_label
 from .store import decode, iso_day, need_issue, number_map, today, week_bounds, week_of
 from .workflow import ARCHIVE, STATES, allowed, issue_owner, state_label
 
@@ -95,9 +95,13 @@ def rows_at(conn, cutoff=None, only=None, *, source=False):
         row.update({k:local.get(k,"") for k in ("people","work_time","order_no","hint","note","en")})
         row["author_raw"] = row["author"]
         row["author"] = customer_author(row["author"])
+        row["machine"] = short_agv_machine(row["station_raw"]) or row["machine"]
         row["station"] = station_label(row["station"], row["machine"])
-        if row["station"] == "AGV":
-            row["area"] = "AGV"
+        # 旧库保留原始 AGV 区域；查询时按设备分期，同样适用于历史周报。
+        # Classify legacy AGV snapshots at read time, including historical reports.
+        if row["station"] == "AGV" or row["area"] == "AGV" or row["machine"] in ("1220", "1221"):
+            row["station"] = "AGV"
+            row["area"] = "S2" if str(row["machine"]).endswith("1221") else "S1"
         row["owner"] = issue_owner(local)
         if cutoff < today() and payload.get("tracker") and "owner" not in local.get("manual_fields", ()):
             row["owner"] = internal_owner(payload["tracker"])
@@ -120,7 +124,7 @@ def rows_at(conn, cutoff=None, only=None, *, source=False):
 
 def group_by(rows,key):
     groups=defaultdict(Counter)
-    fixed = {"area":("S1","S2","AGV","General")}
+    fixed = {"area":("S1","S2","General")}
     for name in fixed.get(key, ()):
         groups[name]
     for row in rows:
@@ -291,6 +295,9 @@ def filtered_issues(conn, params, *, source=False):
             values.add("")
         if key == "owner":
             rows = [r for r in rows if any(v.casefold() in values for v in [r["owner"], *owner_names(r["owner"])])]
+        elif key == "area" and "agv" in values:
+            # 旧书签兼容原 AGV 设备集合。 / Preserve pre-split area bookmarks.
+            rows = [r for r in rows if r["station"] == "AGV" or r["area"].casefold() in values]
         elif key == "zf":
             accepted = set().union(*(ZF_GROUPS.get(v, set()) for v in values))
             rows = [r for r in rows if r["resp_class"] in accepted]
@@ -486,6 +493,27 @@ def review_list(conn, page=1, limit=100, status="open"):
     return reviews,total
 
 
+def phase_summary(rows, summary):
+    """单独统计截至日编号不超过 1340 的问题。 / Count the as-of customer number, including its distinct suffix slots."""
+    states_this_week = defaultdict(set)
+    for event in summary["events"]:
+        states_this_week[event["issue_id"]].add(event["to_state"])
+    groups = {"一期（S1 + General）": Counter(), "二期（S2）": Counter()}
+    for row in rows:
+        if not row["base"].isdigit() or int(row["base"]) > 1340:
+            continue
+        group = groups["二期（S2）" if row["area"] == "S2" else "一期（S1 + General）"]
+        weekly = states_this_week[row["id"]]
+        group["total"] += 1
+        group["open"] += row["state"] not in ARCHIVE and row["resp_class"] != "zf"
+        group["closed"] += "closed" in weekly
+        group["pending"] += row["state"] == "reported"
+        planned = scheduled(row, summary["week"])
+        working = row["state"] == "working" and summary["as_of"] >= summary["start"]
+        group["active"] += bool(planned or working or weekly.intersection({"closed", "reported"}))
+    return groups
+
+
 def report(conn,params,summary=None):
     from .records import tasks
     o=summary if summary is not None else overview(conn,params)
@@ -499,8 +527,14 @@ def report(conn,params,summary=None):
            "区域汇总   未结 / High / Medium / Low"]
     for a in o["areas"]:
         lines.append(f"{a['area']}   {a['total']} / {a['High']} / {a['Medium']} / {a['Low']}")
-    lines.extend(["","本周状态更新"])
     indexed={r["id"]:r for r in rows_at(conn,o["as_of"])}
+    lines.extend(["", "分期统计（客户编号 ≤ 1340，含同号后缀）"])
+    for phase, counts in phase_summary(indexed.values(), o).items():
+        lines.extend([phase,
+                      f"  问题总数 {counts['total']} / 我方未结 {counts['open']}",
+                      f"  本周计划、整改、关闭或上报（去重） {counts['active']}",
+                      f"  本周客户关闭 {counts['closed']} / 截至日已上报待核查 {counts['pending']}"])
+    lines.extend(["","本周状态更新"])
     for e in o["events"]:
         r=indexed[e["issue_id"]]
         lines.extend([f"{e['day']}  #{e['number']}  {e['station']}  {STATES.get(e['from_state'],'新增')} → {STATES[e['to_state']]}",

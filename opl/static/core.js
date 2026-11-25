@@ -103,6 +103,9 @@ export function route() {
     }
     else params[canon]=query.get(key);
   }
+  if(name==="issues" && params.area?.length===1 && params.area[0]==="AGV" && !params.station){
+    delete params.area;params.station=["AGV"];migrated=true;
+  }
   return {name:name || "overview",params,migrated};
 }
 export function pageTitle(title,subtitle="",tools="") {

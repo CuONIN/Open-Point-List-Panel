@@ -96,6 +96,16 @@ _AVO_IN_LABEL = re.compile(r"(?i)\bAVO[\s.:_-]*(\d{4}(?:\s*[-–]\s*\d{4})?)(?!\
 AGV_STATIONS = {"24821220": "AGV 一期", "24821221": "AGV 二期"}
 
 
+def short_agv_machine(raw):
+    """识别工位栏简写的 AGV 设备号。 / Recognize abbreviated machine numbers in an AGV station cell."""
+    raw = _plain(raw)
+    if raw in ("1220", "1221") or re.search(r"\bagv\b", raw, re.I):
+        match = re.search(r"(?<!\d)(122[01])(?!\d)", _AVO_IN_LABEL.sub("", raw))
+        if match:
+            return "2482" + match[1]
+    return ""
+
+
 def station_label(value, machine=""):
     """展示和统计时合并 AGV，来源匹配仍使用机器号。 / Group AGVs for display while preserving machine identity."""
     if machine in AGV_STATIONS or str(value).strip().casefold() in ("agv 一期", "agv 二期"):
@@ -179,7 +189,7 @@ class StationMap:
         avo_match = _AVO_IN_LABEL.search(raw)
         avo = re.sub(r"\s+", "", avo_match[1]) if avo_match else ""
         machine_match = _MACHINE_IN_LABEL.search(raw)
-        machine = _machine(machine_match.group()) if machine_match else ""
+        machine = _machine(machine_match.group()) if machine_match else short_agv_machine(raw)
         short = _AVO_IN_LABEL.sub("", _MACHINE_IN_LABEL.sub("", raw)).strip(" \t()[]-/")
         namekey = _key(short)
         by_name = self.stations.get(self.by_name.get(namekey))

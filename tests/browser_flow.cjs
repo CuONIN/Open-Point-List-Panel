@@ -33,9 +33,9 @@ async function verifyFilterLayers(page, origin) {
     });
   });
   assert.deepEqual(hits, ["menu", "menu"], "Opened filters must receive pointer events over both sticky headers");
-  await picker.locator("input[value=AGV]").uncheck();
-  await picker.locator("input[value=AGV]").check();
-  assert(await picker.locator("input[value=AGV]").isChecked());
+  await picker.locator("input[value=General]").uncheck();
+  await picker.locator("input[value=General]").check();
+  assert(await picker.locator("input[value=General]").isChecked());
 }
 
 async function verifyExcelFilters(page, origin) {
@@ -58,16 +58,16 @@ async function verifyExcelFilters(page, origin) {
   const apply=k=>reload(()=>picker(k).locator("[type=submit]").click());
   const reset=()=>reload(()=>form.locator("[data-reset-filters]").click());
   await reload(()=>page.goto(origin+"#issues?limit=1"));
-  assert.equal(await picker("area").locator("input:checked").count(),4);
+  assert.equal(await picker("area").locator("input:checked").count(),3);
   assert.equal(await box("state","closed").isChecked(),false);
   assert.equal(await box("state","zf_only").isChecked(),false);
   assert.equal(await box("responsible","ZF").isChecked(),false);
   assert.equal(await box("responsible","HAOSEN / ZF").isChecked(),true);
-  await open("area");await box("area","AGV").uncheck();await apply("area");
-  assert.deepEqual(params().getAll("area"),["S1","S2","General"]);
+  await open("area");await box("area","General").uncheck();await apply("area");
+  assert.deepEqual(params().getAll("area"),["S1","S2"]);
   await reload(()=>page.locator('[data-page="2"]').click());
   assert.equal(params().get("page"),"2");
-  assert.equal(await box("area","AGV").isChecked(),false);
+  assert.equal(await box("area","General").isChecked(),false);
   const exportURL=page.waitForRequest(r=>new URL(r.url()).pathname==="/api/issues/export.xlsx");
   const download=page.waitForEvent("download");
   await page.locator('[data-export="xlsx"]').click();
@@ -80,7 +80,7 @@ async function verifyExcelFilters(page, origin) {
   await open("area");await picker("area").locator('[data-pick="none"]').click();await apply("area");
   assert.deepEqual(params().getAll("area"),["__none__"]);assert.deepEqual(await rows(),[]);
   await open("area");await picker("area").locator('[data-pick="all"]').click();await apply("area");
-  assert.equal(params().has("area"),false);assert.equal(await picker("area").locator("input:checked").count(),4);
+  assert.equal(params().has("area"),false);assert.equal(await picker("area").locator("input:checked").count(),3);
   await form.locator("input[name=q]").fill("1405a,1405b");
   await reload(()=>form.locator(".filters-row > button[type=submit]").click());
   assert.equal(await page.locator(".card-head h2 .tag.num").innerText(),"2");
@@ -147,7 +147,7 @@ async function main() {
     await drawer.getByRole("heading", {name: "问题 #1405b", exact: true}).waitFor();
     await page.keyboard.press("Escape");
     await page.waitForURL(base);
-    assert.equal(await page.locator("[data-remove-filter=area]").count(), 2);
+    assert.match(await page.locator("[data-remove-filter=area]").innerText(), /排除 General/);
 
     await link.click();
     await drawer.locator("[data-transition]").click();

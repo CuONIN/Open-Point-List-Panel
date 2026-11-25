@@ -285,10 +285,15 @@ def create_app(root=ROOT):
 
     @app.get("/api/report")
     def weekly_report():
+        if request.args.get("as_of"):
+            _, start, end, _ = queries.week_context(request.args)
+            if not start <= request.args["as_of"] <= end or request.args["as_of"] > today():
+                raise ValueError("统计截至日期须在所选周内，且不能晚于今天。")
         summary = queries.overview(db(),request.args)
         refs = {p["number"]:p["id"] for p in summary["plans"]}
         refs.update({e["number"]:e["issue_id"] for e in summary["events"]})
-        return jsonify(text=queries.report(db(),request.args,summary),issue_refs=refs)
+        return jsonify(text=queries.report(db(),request.args,summary),issue_refs=refs,
+                       start=summary["start"], end=summary["end"], as_of=summary["as_of"])
 
     @app.post("/api/translate")
     def translate():

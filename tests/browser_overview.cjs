@@ -118,6 +118,14 @@ async function main() {
     await page.getByText("本周暂无状态变更。", {exact:true}).waitFor();
     await page.getByText("本周暂无正式计划或新开工的整改项。", {exact:true}).waitFor();
     assert.equal(await page.locator(".overview-scroll").count(), 0);
+    await page.goto(origin+"#report?week=2025-W02");
+    const cutoff = page.locator("[data-report-cutoff]");
+    await cutoff.fill("2025-01-08");
+    await page.waitForURL(/as_of=2025-01-08/);
+    await page.getByText(/统计截至 2025-01-08/).waitFor();
+    assert((await page.locator(".report-output").innerText()).includes("二期（S2）"));
+    await page.getByRole("button",{name:"上一周"}).click();
+    await page.waitForURL(/week=2025-W01$/);
     assert.deepEqual(errors, []);
     console.log("PASS full weekly lists, native scrollbar drag, wheel/keyboard, start and plan dates, mobile and week drilldown");
   } finally { await browser.close(); }

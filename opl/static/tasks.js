@@ -84,12 +84,13 @@ export function bindTasks(node,params){
 }
 export async function report(params,signal){
   const wk=params.week || context.config.week;
-  const data=await api("report"+qs({week:wk}),{signal});
+  const selection={week:wk,as_of:params.as_of};
+  const data=await api("report"+qs(selection),{signal});
   const raw=data.text || "";
   let refs=data.issue_refs;
   if(!refs && raw.includes("#")){
     try {
-      const ov=await api("overview"+qs({week:wk}),{signal});
+      const ov=await api("overview"+qs(selection),{signal});
       refs=Object.fromEntries([...(ov.events || []).map(e=>[e.number,e.issue_id]),...(ov.plans || []).map(p=>[p.number,p.id])]);
     }catch(e){if(e.name==="AbortError")throw e;}
   }
@@ -98,10 +99,15 @@ export async function report(params,signal){
     if(!m || !Object.hasOwn(refs || {},m[2]))return esc(line);
     return esc(m[1] || "")+issueLink(refs[m[2]],m[2])+esc(line.slice(m[0].length));
   }).join("\n");
-  return '<div class="report-view">'+pageTitle("项目周报",weekLabel(wk)+" · EOL 测试线",weekTools(wk))+
+  const lastDay=data.end<context.config.today?data.end:context.config.today;
+  const cutoff='<label>统计截至 <input type="date" data-report-cutoff min="'+esc(data.start)+'" max="'+esc(lastDay)+'" value="'+esc(data.as_of)+'"'+(lastDay<data.start?' disabled':'')+'></label>';
+  return '<div class="report-view">'+pageTitle("项目周报",weekLabel(wk)+" · EOL 测试线",weekTools(wk)+cutoff)+
     '<div class="stack"><section class="card"><div class="card-head"><div class="head-area">'+icon("report")+'<h2>周报内容</h2></div><div class="tools"><button type="button" class="btn small-btn" data-report-copy>'+icon("copy")+'复制全文</button><button type="button" class="btn small-btn" data-print>'+icon("print")+'打印</button></div></div><pre class="report-output" tabindex="0">'+linked+'</pre></section></div></div>';
 }
-export function bindReport(node){
+export function bindReport(node,params){
+  node.querySelector("[data-report-cutoff]").onchange=e=>{
+    if(e.target.validity.valid)go("report",{...params,week:params.week || context.config.week,as_of:e.target.value});
+  };
   node.querySelector("[data-print]").onclick=()=>window.print();
   node.querySelector("[data-report-copy]").onclick=async()=>{
     try{if(!navigator.clipboard)throw new Error();await navigator.clipboard.writeText(node.querySelector(".report-output").textContent);toast("已复制周报");}

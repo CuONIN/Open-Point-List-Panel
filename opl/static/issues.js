@@ -39,7 +39,7 @@ function choices(key,value){
   const cfg=context.config, actual=cfg.filters?.[key] || [];
   let entries=actual;
   if(key==="state")entries=Object.entries(cfg.states || {});
-  if(key==="area")entries=["S1","S2","AGV","General",...actual];
+  if(key==="area")entries=["S1","S2","General",...actual];
   if(key==="priority")entries=["High","Medium","Low",...actual];
   if(key==="zf")entries=[["pure","纯 ZF"],["joint","豪森／ZF 共同责任"],["none","无 ZF 参与"],...actual.filter(v=>v===BLANK)];
   const result=new Map();

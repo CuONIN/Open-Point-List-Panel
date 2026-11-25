@@ -263,6 +263,32 @@ class WorkbenchTests(unittest.TestCase):
             self.assertEqual((copy/path).read_bytes(),b"evidence complete")
             self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0],"ok")
 
+    def test_phase_report_cutoff_number_suffixes_and_overlapping_activity(self):
+        """按历史截点计算周活动并集，保留 1340 的不同后缀。 / Count each eligible issue once at the requested snapshot."""
+        self.rows[0][0] = self.rows[1][0] = 1340
+        extra = [1341,"2025-01-03","Oil Filling 2","ZZ","Spare","","","Extra fixture","","HAOSEN","","offen"]
+        self.import_version("2025-01-03", [*self.rows, extra])
+        self.change(self.b,"transition",day="2025-01-05",to="working",owner="乙",executor="乙",note="上周开工")
+        self.move("planned",plan="2025-W02",note="排进本周")
+        self.move("ready",day="2025-01-07",note="整改完成")
+        self.move("reported",day="2025-01-08",contact="客户会议")
+        self.rows[0][-1] = "erledigt"
+        self.import_version("2025-01-09", [*self.rows, extra])
+        path = "report?week=2025-W02&as_of="
+        def section(day):
+            text = self.get(path + day)["text"]
+            return text.split("分期统计（客户编号 ≤ 1340，含同号后缀）")[1].split("本周状态更新")[0]
+        wed = section("2025-01-08")
+        thu = section("2025-01-09")
+        self.assertIn("一期（S1 + General）\n  问题总数 3 / 我方未结 1", wed)
+        self.assertIn("二期（S2）\n  问题总数 1 / 我方未结 1", wed)
+        self.assertEqual(wed.count("本周计划、整改、关闭或上报（去重） 1"),2)
+        self.assertIn("本周客户关闭 0 / 截至日已上报待核查 1", wed)
+        self.assertIn("一期（S1 + General）\n  问题总数 3 / 我方未结 0", thu)
+        self.assertIn("本周客户关闭 1 / 截至日已上报待核查 0", thu)
+        self.assertEqual(thu.count("本周计划、整改、关闭或上报（去重） 1"),2)
+        self.assertEqual(self.client.get("/api/"+path+"2025-01-13").status_code,400)
+
     def test_customer_author_sort_order_and_unified_agv(self):
         """AGV 汇总同名工位，保留两个机器号。 / Group AGV by station while preserving both equipment IDs."""
         self.rows[0][2:4] = ["24821220","Gleser, Tobias (ZF SBR)"]
@@ -281,6 +307,9 @@ class WorkbenchTests(unittest.TestCase):
         result = self.get(base)
         self.assertEqual([(r["station"], r["total"]) for r in result["stations"]], [("AGV",2)])
         self.assertTrue(all(r["station"] == "AGV" and "phase" not in r for r in result["items"]))
+        self.assertEqual(numbers(base.replace("area=AGV","area=S1")), ["9"])
+        self.assertEqual(numbers(base.replace("area=AGV","area=S2")), ["100"])
+        self.assertNotIn("AGV", self.get("config")["filters"]["area"])
         self.assertNotIn("phases", self.get("overview"))
         self.assertNotIn("phase", self.get("config")["filters"])
         self.assertEqual(self.get("issues?author=Gleser%2C+Tobias+%28ZF+SBR%29")["total"], 1)

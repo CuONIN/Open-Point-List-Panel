@@ -129,6 +129,7 @@ document.addEventListener("click",event=>{
   }
   if(el.hasAttribute("data-week-today") || el.hasAttribute("data-week-step")){
     const r=address(), current=r.params.week || context.config.week;
+    if(r.page==="report")delete r.params.as_of;
     go(r.page,{...r.params,week:el.hasAttribute("data-week-today")?context.config.week:shiftWeek(current,Number(el.dataset.weekStep))});return;
   }
   if(el.dataset.issue){
@@ -138,7 +139,11 @@ document.addEventListener("click",event=>{
   if(el.dataset.transition){void transition(el.dataset.transition).catch(e=>{if(e.name!=="AbortError")toast(e.message);});}
 });
 document.addEventListener("change",e=>{
-  if(e.target.matches("[data-week-picker]") && e.target.value){const a=address();go(a.page,{...a.params,week:e.target.value});}
+  if(e.target.matches("[data-week-picker]") && e.target.value){
+    const a=address();
+    if(a.page==="report")delete a.params.as_of;
+    go(a.page,{...a.params,week:e.target.value});
+  }
 });
 for(const dialog of [drawer,edit]){
   dialog.addEventListener("cancel",e=>{
