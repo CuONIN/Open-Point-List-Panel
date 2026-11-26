@@ -13,6 +13,9 @@ from .store import decode, iso_day, need_issue, number_map, today, week_bounds, 
 from .workflow import ARCHIVE, STATES, allowed, issue_owner, state_label
 
 
+EOL_PHASE_MAX_CUSTOMER_NUMBER = 1350
+
+
 def owner_names(value):
     return [s.strip() for s in re.split(r"[/、,，;；\n]+",value or "") if s.strip()]
 
@@ -494,13 +497,13 @@ def review_list(conn, page=1, limit=100, status="open"):
 
 
 def phase_summary(rows, summary):
-    """单独统计截至日编号不超过 1340 的问题。 / Count the as-of customer number, including its distinct suffix slots."""
+    """按截至日的客户主编号分期统计，同号后缀各计一条。 / Count each eligible issue, including distinct suffixes."""
     states_this_week = defaultdict(set)
     for event in summary["events"]:
         states_this_week[event["issue_id"]].add(event["to_state"])
     groups = {"一期（S1 + General）": Counter(), "二期（S2）": Counter()}
     for row in rows:
-        if not row["base"].isdigit() or int(row["base"]) > 1340:
+        if not row["base"].isdigit() or int(row["base"]) > EOL_PHASE_MAX_CUSTOMER_NUMBER:
             continue
         group = groups["二期（S2）" if row["area"] == "S2" else "一期（S1 + General）"]
         weekly = states_this_week[row["id"]]
@@ -528,7 +531,7 @@ def report(conn,params,summary=None):
     for a in o["areas"]:
         lines.append(f"{a['area']}   {a['total']} / {a['High']} / {a['Medium']} / {a['Low']}")
     indexed={r["id"]:r for r in rows_at(conn,o["as_of"])}
-    lines.extend(["", "分期统计（客户编号 ≤ 1340，含同号后缀）"])
+    lines.extend(["", f"分期统计（客户编号 ≤ {EOL_PHASE_MAX_CUSTOMER_NUMBER}，含同号后缀）"])
     for phase, counts in phase_summary(indexed.values(), o).items():
         lines.extend([phase,
                       f"  问题总数 {counts['total']} / 我方未结 {counts['open']}",

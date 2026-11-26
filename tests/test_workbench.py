@@ -264,9 +264,9 @@ class WorkbenchTests(unittest.TestCase):
             self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone()[0],"ok")
 
     def test_phase_report_cutoff_number_suffixes_and_overlapping_activity(self):
-        """按历史截点计算周活动并集，保留 1340 的不同后缀。 / Count each eligible issue once at the requested snapshot."""
-        self.rows[0][0] = self.rows[1][0] = 1340
-        extra = [1341,"2025-01-03","Oil Filling 2","ZZ","Spare","","","Extra fixture","","HAOSEN","","offen"]
+        """按历史截点计算周活动并集，保留 1350 的不同后缀。 / Count each eligible issue once at the requested snapshot."""
+        self.rows[0][0] = self.rows[1][0] = 1350
+        extra = [1351,"2025-01-03","Oil Filling 2","ZZ","Spare","","","Extra fixture","","HAOSEN","","offen"]
         self.import_version("2025-01-03", [*self.rows, extra])
         self.change(self.b,"transition",day="2025-01-05",to="working",owner="乙",executor="乙",note="上周开工")
         self.move("planned",plan="2025-W02",note="排进本周")
@@ -277,7 +277,7 @@ class WorkbenchTests(unittest.TestCase):
         path = "report?week=2025-W02&as_of="
         def section(day):
             text = self.get(path + day)["text"]
-            return text.split("分期统计（客户编号 ≤ 1340，含同号后缀）")[1].split("本周状态更新")[0]
+            return text.split("分期统计（客户编号 ≤ 1350，含同号后缀）")[1].split("本周状态更新")[0]
         wed = section("2025-01-08")
         thu = section("2025-01-09")
         self.assertIn("一期（S1 + General）\n  问题总数 3 / 我方未结 1", wed)
