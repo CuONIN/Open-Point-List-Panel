@@ -54,7 +54,7 @@ function feedbackView(d){
 }
 function historyView(d){
   const events=d.events || [];
-  const keys={...fieldNames,resource:"等待事项",expected:"确认约期",followup:"下次跟进日",order:"物料单号",obstacle:"实施阻碍",outcome:"处理结论",available_day:"确认条件日期",executor:"执行人",contact:"对接人或凭据",basis:"日期依据",version:"来源版本"};
+  const keys={...fieldNames,resource:"等待事项",expected:"确认约期",followup:"下次跟进日",order:"物料单号",obstacle:"实施阻碍",outcome:"处理结论",available_day:"确认条件日期",executor:"执行人",contact:"对接人或凭据",basis:"日期依据",version:"来源版本",action_date:"客户行动日期",action_text:"客户行动原文",comparison_date:"上版对比日期"};
   const history=section("我方状态历史",events.length?events.map(ev=>{
     const data=Object.entries(normalizeOwner(ev.payload || {})).filter(([k,v])=>v && k!=="note" && !(ev.kind==="manual_closed" && k==="evidence"));
     return '<article class="time-item"><div class="time-head"><b>'+esc(ev.day || "日期待核")+'</b>'+ (ev.from_state?statePill(ev.from_state)+icon("arrow"):"")+statePill(ev.to_state || ev.state)+'<span>'+esc(ev.actor || "导入")+'</span></div><p class="pre">'+esc(ev.note || "")+'</p>'+

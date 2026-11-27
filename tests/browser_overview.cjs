@@ -78,11 +78,22 @@ async function main() {
     await page.route("**/api/overview?*", route => {
       const selected = new URL(route.request().url()).searchParams.get("week");
       return route.fulfill({json:{week:selected,start:"2026-11-23",end:"2026-11-29",as_of:"2026-11-24",
-        events:selected===week ? events : [],plans:selected===week ? plans : []}});
+        counts:{clarify_zf:2,approve_zf:3,confirm_internal:1},events:selected===week ? events : [],plans:selected===week ? plans : []}});
     });
     await page.goto(origin+"#overview?week="+week);
     const changes = page.getByRole("region", {name:"状态变更记录"});
     const agenda = page.getByRole("region", {name:"本周实施计划与整改"});
+    await agenda.waitFor();
+    const metrics = page.locator("a.metric");
+    assert.equal(await metrics.count(),7);
+    assert.equal(await metrics.nth(0).locator(".metric-caption").innerText(),"待澄清／确认");
+    assert.equal(await metrics.nth(0).locator(".big-number").innerText(),"6");
+    assert.equal(await metrics.nth(1).locator(".metric-caption").innerText(),"进入整改");
+    await metrics.first().click();
+    await page.waitForURL(/#issues\?/);
+    assert.deepEqual(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).getAll("state"),
+      ["clarify_zf","approve_zf","confirm_internal"]);
+    await page.goBack();
     await agenda.waitFor();
     for (const link of await page.locator("a.metric").all()) {
       const query = new URLSearchParams((await link.getAttribute("href")).split("?")[1]);

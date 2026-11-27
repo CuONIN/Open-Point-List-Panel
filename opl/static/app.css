@@ -98,11 +98,11 @@ main{max-width:1800px;margin:0 auto;padding:26px clamp(16px,2.6vw,42px) 42px;out
 .dashboard-grid{grid-template-columns:1.35fr 1fr}
 .two-col{grid-template-columns:1fr 1fr}
 .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
-.slab{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));border-top:1px solid #e4e9e9}
+.slab{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border-top:1px solid #e4e9e9}
 .metric{position:relative;border:0;border-right:1px solid #e4e9e9;padding:14px 14px 16px 18px;text-align:left;min-width:0;background:#fff}
 .metric:last-child{border-right:0}
 .metric:hover{background:#f4f8f6}
-.metric-caption{display:flex;align-items:center;gap:7px;font-size:.84rem;color:#455960;font-weight:540;white-space:nowrap}
+.metric-caption{display:flex;align-items:center;gap:7px;font-size:.84rem;color:#455960;font-weight:540}
 .swatch{width:8px;height:8px;background:var(--swatch,#537e7d);border-radius:2px;display:inline-block;flex-shrink:0}
 .big-number{display:block;font:650 clamp(1.8rem,2.3vw,2.3rem)/1.05 "Segoe UI",sans-serif;letter-spacing:-.04em;margin-top:9px;color:#17333a}
 .tag,.pill,.state-btn,.area-token{display:inline-flex;align-items:center;gap:4px;line-height:1.35;white-space:nowrap}

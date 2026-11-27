@@ -44,6 +44,7 @@
 <text x="736" y="277" class="backtext" text-anchor="middle">确认重新开工</text>
 <text x="55" y="266" class="body" >现场已开工或已经完成的项，可从待梳理直接登记。</text>
 <text x="55" y="297" class="note" >返工需要先排期时，可回到已列入计划。</text>
+<text x="55" y="332" class="note">整改中、完成待上报或已上报待核查 → 客户新增较晚的行动且仍由我方跟踪 → 需返工。</text>
 <rect x="25" y="372" width="1270" height="288" rx="16" fill="#ffffff" stroke="#d5dfe2" stroke-width="1.5"/>
 <text x="50" y="408" class="head" >澄清、等待与谈判</text>
 <text x="337" y="405" class="note" >澄清事项、资源约期和谈判结论分别记录。</text>

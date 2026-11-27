@@ -26,7 +26,8 @@ MODES = {"current": "当前状态", "occurred": "期间进入过", "latest": "�
          "asof": "截至所选日", "planned": "本周实施计划", "unreported": "本周计划尚未上报"}
 ZF = {"pure": "纯 ZF", "joint": "豪森与 ZF 共同责任", "any": "所有 ZF 参与", "none": "无 ZF 参与"}
 EVENTS = {"baseline": "建账基线", "new": "新增", "meeting": "现场确认", "reopened": "客户重开",
-          "returned": "责任转回", "manual_closed": "现场确认关闭", "customer_closed": "客户关闭", "transferred": "转纯 ZF"}
+          "returned": "责任转回", "manual_closed": "现场确认关闭", "customer_closed": "客户关闭", "transferred": "转纯 ZF",
+          "customer_rework": "客户行动更新转需返工"}
 
 
 def filter_caption(params, cutoff, total):

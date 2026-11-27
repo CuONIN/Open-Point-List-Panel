@@ -80,6 +80,8 @@ class WorkbenchTests(unittest.TestCase):
         self.change(self.b, "transition", to="ready", owner="李工", note="完成待报")
         self.rows[0][-1] = "erledigt"
         self.rows[1][9] = "ZF"
+        for row in self.rows[:2]:
+            row[8] += "\n07.01.2025: Check the updated setup."
         self.import_version("2025-01-08", self.rows)
         summary = self.get("overview?week=2025-W02")
         for state, ids in (("working", []), ("ready", []), ("closed", [self.a]), ("zf_only", [self.b])):
@@ -93,6 +95,80 @@ class WorkbenchTests(unittest.TestCase):
         before = self.get("overview?week=2025-W02&as_of=2025-01-07")["counts"]
         self.assertEqual((before["working"], before["ready"], before["closed"], before["zf_only"]), (1,1,0,0))
         self.assertEqual({e["to_state"] for e in summary["events"]}, {"working","ready","closed","zf_only"})
+
+    def test_weekly_clarification_union_uses_only_the_latest_state(self):
+        """三类待确认按问题去重，并与下钻清单一致。 / Count the latest clarification states once per issue."""
+        for uid, state in ((self.a,"clarify_zf"),(self.b,"confirm_internal")):
+            self.change(uid,"transition",to=state,owner="甲",contact="项目组",note="确认接口")
+        self.move("approve_zf",day="2025-01-07",contact="客户",outcome="接口已澄清",note="确认方案")
+        query = "week=2025-W02&as_of=2025-01-07"
+        counts = self.get("overview?"+query)["counts"]
+        self.assertEqual([counts[s] for s in ("clarify_zf","approve_zf","confirm_internal")],[0,1,1])
+        filters = "&mode=latest&scope=all&state=clarify_zf&state=approve_zf&state=confirm_internal"
+        self.assertEqual(self.get("issues?"+query+filters)["total"],2)
+        self.rows[0][-1] = "erledigt"
+        self.import_version("2025-01-08",self.rows)
+        self.assertEqual([r["id"] for r in self.get("issues?week=2025-W02"+filters)["items"]],[self.b])
+
+    def test_customer_action_rework_preview_history_and_reimport(self):
+        """比较该问题的行动日，确认预览、保存和周报一致。 / Preview, apply and report from one customer-action rule."""
+        self.move("working",executor="甲",note="现场调整")
+        self.change(self.b,"transition",to="ready",owner="乙",note="等待上报")
+        self.rows[2][8] = "Customer status unchanged"
+        self.import_version("2025-01-08",self.rows)
+        for row in self.rows[:2]:
+            row[8] = "07.01.2025: Repeat the alignment check.\n"+row[8]
+        path = self.root/"ZF-2025-01-10.xlsx"
+        workbook(path,self.rows)
+        with path.open("rb") as stream:
+            preview = self.client.post("/api/imports/preview",data={"files":(stream,path.name)}).json["items"][0]
+        self.assertEqual(preview["summary"]["rework"],2)
+        self.assertEqual(self.get(f"issues/{self.a}")["state"],"working")
+        result = self.client.post("/api/imports/commit",json={"token":preview["token"]})
+        self.assertEqual(result.json["summary"],preview["summary"])
+        for uid in (self.a,self.b):
+            event = self.get(f"issues/{uid}")["events"][0]
+            self.assertEqual((event["kind"],event["to_state"],event["day"]),("customer_rework","rework","2025-01-10"))
+            evidence = event["payload"]
+            self.assertEqual((evidence["comparison_date"],evidence["action_date"]),("2025-01-02","2025-01-07"))
+            self.assertEqual(evidence["action_text"],"Repeat the alignment check.")
+        self.assertEqual(self.get("overview?week=2025-W02")["counts"]["rework"],2)
+        self.assertIn("需返工",self.get("report?week=2025-W02")["text"])
+        self.assertTrue(importer.import_book(self.conn,self.root,path)["duplicate"])
+        self.move("working",day="2025-01-11",executor="甲",note="继续整改")
+        self.rows[0][8]="08.01.2025: Repeat the alignment check.\n"+self.rows[0][8]
+        self.assertEqual(self.import_version("2025-01-12",self.rows)["summary"]["rework"],0)
+        self.assertEqual(self.get(f"issues/{self.a}")["state"],"working")
+
+    def test_rework_fallback_uses_previous_effective_customer_version(self):
+        """旧表无日期时，使用上一份生效客户表的日期。 / Fall back to the previous release, including unchanged rows."""
+        self.rows[0][8]="Undated initial note"
+        self.import_version("2025-01-03",self.rows)
+        self.move("ready",note="完成")
+        self.move("reported",day="2025-01-07",contact="已提交")
+        self.rows[1][8]="Another issue was updated"
+        self.import_version("2025-01-09",self.rows)
+        self.rows[0][8]="09.01.2025: Same-day note\n08.01.2025: Older note"
+        self.assertEqual(self.import_version("2025-01-10",self.rows)["summary"]["rework"],0)
+        self.rows[0][8]="Undated again"
+        self.import_version("2025-01-11",self.rows)
+        self.rows[0][8]="08.01.2025: Archived finding"
+        self.assertTrue(self.import_version("2025-01-08",self.rows)["historical"])
+        self.assertEqual(self.get(f"issues/{self.a}")["state"],"reported")
+        self.rows[0][8]="12.01.2025: Inspect the terminal"
+        self.assertEqual(self.import_version("2025-01-13",self.rows)["summary"]["rework"],1)
+        event=self.get(f"issues/{self.a}")["events"][0]
+        self.assertEqual(event["from_state"],"reported")
+        self.assertEqual(event["payload"]["comparison_date"],"2025-01-11")
+
+    def test_edited_or_ambiguous_action_does_not_trigger_rework(self):
+        self.move("working",executor="甲",note="现场复核")
+        self.rows[0][8]="02.01.2025 JF: Recheck.\n02.01.2025 JF: Corrected spelling.\n03/04/2025: Ambiguous date."
+        self.assertEqual(self.import_version("2025-01-09",self.rows)["summary"]["rework"],0)
+        self.rows[0][8]="Check by 10.01.2025"
+        self.rows[1][8]="10.01.2025: New note for issue in triage"
+        self.assertEqual(self.import_version("2025-01-10",self.rows)["summary"]["rework"],0)
+        self.assertEqual(self.get(f"issues/{self.a}")["state"],"working")
 
     def test_scopes_multiple_tags_and_whole_filtered_export(self):
         self.assertEqual(self.get("issues")["total"], 2)

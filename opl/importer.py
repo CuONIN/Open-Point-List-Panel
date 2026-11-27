@@ -160,8 +160,32 @@ def customer_transition(row, old, issue, version):
 
 
 def statistics():
-    return dict(rows=0,new=0,matched=0,changed=0,closed=0,transferred=0,reopened=0,missing=0,
+    return dict(rows=0,new=0,matched=0,changed=0,closed=0,transferred=0,reopened=0,rework=0,missing=0,
                 review=0,unchanged=0,translation=0)
+
+
+def customer_decision(row, old, issue, version, previous_version):
+    """比较客户原始快照，为状态变更保留行动依据。 / Compare customer snapshots and retain the action supporting rework."""
+    target = customer_transition(row, old, issue, version)
+    if (target != issue["state"] or target not in ("working", "ready", "reported")
+            or norm(row["status"]) not in ("offen", "in arbeit") or row["resp_class"] not in ("haosen", "joint")
+            or row["action"] == old["action"]):
+        return target, None
+
+    previous = split_actions(old["action"])
+    known_text = {norm(entry["original"] or entry["zh"]) for entry in previous}
+    previous_day = max((entry["date"] for entry in previous
+                        if entry["date"] and (entry["original"] or entry["zh"])), default="")
+    cutoff = previous_day or previous_version
+    # 日期属于段首，正文里提到的计划日期不会变成更新日。 / Only a dated action heading establishes an update.
+    candidates = (entry for entry in split_actions(row["action"])
+                  if entry["date"] > cutoff and (entry["original"] or entry["zh"])
+                  and norm(entry["original"] or entry["zh"]) not in known_text)
+    latest = max(candidates, key=lambda entry: entry["date"], default=None)
+    if latest is None:
+        return target, None
+    return "rework", {"action_date": latest["date"], "action_text": latest["original"] or latest["zh"],
+                      "comparison_date": cutoff, "basis": "上版最新行动日期" if previous_day else "上版清单日期"}
 
 
 def inspect_import(conn, root, path, filename, version="", revision_no=0, line=EOL):
@@ -182,6 +206,7 @@ def inspect_import(conn, root, path, filename, version="", revision_no=0, line=E
     if previous:
         return {**info,"duplicate":True,"version":previous["version"],"summary":{**statistics(),"rows":len(rows)}},[],[]
     last = conn.execute("SELECT version,revision_no FROM batches WHERE kind='zf' AND applied=1 ORDER BY version DESC,revision_no DESC LIMIT 1").fetchone()
+    info["previous_version"] = last["version"] if last else ""
     historical = bool(kind=="zf" and last and (version,revision_no)<tuple(last))
     if kind=="zf" and conn.execute("SELECT 1 FROM batches WHERE kind='zf' AND version=? AND revision_no=?",(version,revision_no)).fetchone():
         raise ValueError("同日修订号已经存在，请为不同内容选择新的修订号。")
@@ -241,10 +266,14 @@ def inspect_import(conn, root, path, filename, version="", revision_no=0, line=E
                 summary["changed" if fields else "unchanged"]+=1
                 issue = need_issue(conn, uid)
                 before = issue["state"]
-                after = customer_transition(row, old, issue, version)
+                after, evidence = customer_decision(row, old, issue, version, info["previous_version"])
+                item["decision"] = (after, evidence)
                 if after != before:
                     if after=="closed": summary["closed"]+=1
                     elif after=="zf_only": summary["transferred"]+=1
+                    elif after=="rework":
+                        summary["rework"]+=1
+                        item["reason"] += f"；客户行动更新于 {evidence['action_date']}，转需返工"
                     elif before in ARCHIVE: summary["reopened"]+=1
     missing = []
     if kind=="zf" and not baseline and not historical:
@@ -294,7 +323,7 @@ def sync_actions(conn,uid,src,batch,kind,changed=True):
                           item["date_raw"],item["author"],pos,batch))
 
 
-def apply_customer(conn, root, batch, src, info, uid=None, customer=None, line=EOL):
+def apply_customer(conn, root, batch, src, info, uid=None, customer=None, line=EOL, decision=None):
     """复用内部 ID，仅在生效的客户事实要求时触发自动流转。 / Retain the issue ID and transition only when effective customer facts require it."""
     row = customer or station_fields(src, StatorStations() if line == STATOR else StationMap(root))
     base = row["no"]
@@ -335,7 +364,12 @@ def apply_customer(conn, root, batch, src, info, uid=None, customer=None, line=E
         conn.execute("UPDATE issues SET base=?,customer=?,local=?,last_batch=?,revision=revision+1 WHERE id=?",
                      (base,dump(row),dump(local),batch,uid))
     before = existing["state"]
-    after = customer_transition(row, old, existing, day)
+    after, evidence = decision or customer_decision(row, old, existing, day, info["previous_version"])
+    if evidence:
+        append_event(conn,uid,before,after,max(existing["state_day"],day),"客户版本",
+                     f"客户新增 {evidence['action_date']} 的行动，自动转入需返工。","customer_rework",
+                     {"version":day, **evidence},batch)
+        return uid
     if after!=before:
         kind = {"closed":"customer_closed","zf_only":"transferred"}.get(after,"reopened" if before=="closed" else "returned")
         source_day = row.get("changed_on","")
@@ -473,7 +507,7 @@ def import_book(conn,root,path,filename=None,version="",revision_no=0,line=EOL):
             sid = conn.execute("INSERT INTO source_rows(batch_id,row_no,issue_id,fields) VALUES(?,?,?,?)",
                                (batch,src["row"],uid,dump(src))).lastrowid
             if kind=="zf" and mode in ("match","new"):
-                uid = apply_customer(conn,root,batch,src,info,uid,item.get("customer"))
+                uid = apply_customer(conn,root,batch,src,info,uid,item.get("customer"),line,item.get("decision"))
                 if norm(src["status"]) not in ("offen","in arbeit","erledigt") or classify_responsible(src["responsible"])=="unknown":
                     add_review(conn,batch,sid,"customer_value","客户状态或责任方待核对",{},[uid])
             elif kind!="zf" and mode=="match":
@@ -578,6 +612,9 @@ def resolve_review(conn,root,rid,data,line=EOL):
         if kind=="zf":
             latest = conn.execute("SELECT id FROM batches WHERE kind='zf' AND applied=1 ORDER BY version DESC,revision_no DESC LIMIT 1").fetchone()
             if latest["id"]==r["batch_id"]:
+                previous = conn.execute("SELECT version FROM batches WHERE kind='zf' AND applied=1 AND id<? "
+                                        "ORDER BY version DESC,revision_no DESC LIMIT 1",(r["batch_id"],)).fetchone()
+                info["previous_version"] = previous["version"] if previous else ""
                 uid = apply_customer(conn,root,r["batch_id"],src,info,uid,line=line)
             elif not uid:
                 raise ValueError("历史客户行请绑定已有问题，新增请在生效版处理。")

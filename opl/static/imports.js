@@ -4,7 +4,7 @@ import {actorField,api,apiUrl,context,count,dialogForm,empty,esc,failure,field,g
 let list=[],staged=[],currentPage=1;
 const kinds={zf:"ZF 客户版",haosen:"豪森双语版",haosen_new:"豪森补充版",haosen_macro:"豪森补充版",local:"豪森资料",hs:"豪森资料",hs_plan:"豪森补充版"};
 const reviewNames={field_action:"现场反馈待核",contact:"客户联系人待核",match:"客户行匹配",fields:"我方字段冲突",actions:"客户行动分段",file:"附件归属",missing:"客户版缺行",metadata:"客户字段待核",invalid:"客户字段待核",customer:"客户字段待核",customer_value:"客户字段待核"};
-const summaryNames={rows:"问题行",new:"新增",matched:"匹配",changed:"有更新",closed:"客户关闭",transferred:"转纯 ZF",reopened:"重开／转回",missing:"新版缺行",review:"待核",unchanged:"未变化",translation:"待译"};
+const summaryNames={rows:"问题行",new:"新增",matched:"匹配",changed:"有更新",closed:"客户关闭",transferred:"转纯 ZF",rework:"自动转需返工",reopened:"重开／转回",missing:"新版缺行",review:"待核",unchanged:"未变化",translation:"待译"};
 const fieldNames={plan_candidate:"豪森建议日期",zh:"中文译文",en:"英文译文",owner:"我方负责人",people:"整改人数／工种",work_time:"原表整改时间",order_no:"投产单号",hint:"豪森分类提示",note:"我方备注",problem:"问题原文",station:"工位",status:"客户状态",responsible:"客户责任方",author:"客户提出者"};
 function reviewFields(r){
   const {tracker,...fields}=r.data?.fields || {};

@@ -97,6 +97,25 @@ class MultiLineTests(unittest.TestCase):
         self.assertEqual(self.get("issues/2")["feedback"],[])
         self.assertTrue(any(r["data"].get("action_issue")==1 for r in self.get("imports")["reviews"]))
 
+    def test_only_stator_customer_action_can_trigger_rework(self):
+        """豪森反馈留在现场时间线，客户行动才触发返工。 / Only the customer release can trigger rework."""
+        issue = self.get("issues/1")
+        res = self.client.post(self.base+"issues/1/transition",json={
+            "to":"ready","day":"2025-11-04","owner":"甲","note":"等待上报","actor":"乙","revision":issue["revision"]})
+        self.assertEqual(res.status_code,200,res.data)
+        local = [r.copy() for r in self.rows]
+        local[0][7] = "05.11.2025 ：现场检查\nCustomer request"
+        stator_book(self.local,local,True)
+        importer.import_book(self.db,self.root,self.local,line=STATOR)
+        self.assertEqual(self.get("issues/1")["state"],"ready")
+        self.rows[0][7] += "\n06.11.2025: Adjust the fixture"
+        stator_book(self.customer,self.rows)
+        info = importer.import_book(self.db,self.root,self.customer,version="2025-11-07",line=STATOR)
+        self.assertEqual(info["summary"]["rework"],1)
+        self.assertEqual(self.get("issues/1")["events"][0]["kind"],"customer_rework")
+        self.assertEqual(self.get("issues/2")["state"],"triage")
+        self.assertEqual(self.get("overview?week=2025-W45")["counts"]["rework"],1)
+
     def test_unnumbered_customer_binding_survives_next_version(self):
         blank=[*self.rows[0]]
         blank[0],blank[6]="","Unnumbered complaint"
