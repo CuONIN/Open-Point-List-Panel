@@ -11,19 +11,29 @@ from urllib.parse import urlsplit
 
 from flask import Flask, g, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
 from . import importer, queries, records, workflow
+from .lines import EOL, LINES
 from .excel import classify_responsible
 from .store import (ROOT, Conflict, connect, decode, dump, file_hash, initialize, json_hash,
                     need_issue, today, week_of, writing)
 
 
 def create_app(root=ROOT):
+    """按固定 URL 挂载各线体，旧链接仍进入 EOL。 / Mount isolated line apps and preserve legacy EOL URLs."""
+    app = line_app(root, EOL)
+    mounted = {line.prefix: line_app(root, line) for line in LINES.values() if line != EOL}
+    app.wsgi_app = DispatcherMiddleware(app.wsgi_app, mounted)
+    return app
+
+
+def line_app(root, line):
     root=Path(root).resolve()
     app=Flask(__name__)
     app.config.update(MAX_CONTENT_LENGTH=256*1024*1024,MAX_FORM_MEMORY_SIZE=16*1024*1024)
     app.json.ensure_ascii=False
-    initial=connect(root)
+    initial=connect(root,line)
     try:
         initialize(initial)
     finally:
@@ -31,7 +41,7 @@ def create_app(root=ROOT):
 
     def db():
         if "db" not in g:
-            g.db=connect(root)
+            g.db=connect(root,line)
             if request.method in ("GET","HEAD"):
                 g.db.execute("BEGIN")
         return g.db
@@ -80,7 +90,7 @@ def create_app(root=ROOT):
 
     @app.get("/")
     def index():
-        return render_template("index.html")
+        return render_template("index.html", line=line, lines=LINES.values())
 
     @app.get("/api/health")
     def health():
@@ -88,25 +98,25 @@ def create_app(root=ROOT):
 
     @app.get("/api/config")
     def config():
-        filters = queries.options(db())
+        filters = queries.options(db(),line)
         pure_responsibles = [name for name in filters["responsible"] if classify_responsible(name) == "zf"]
-        return jsonify(states=workflow.STATES,filters=filters,pure_responsibles=pure_responsibles,today=today(),week=week_of(today()),
+        return jsonify(line=line.config(),states=workflow.STATES,filters=filters,pure_responsibles=pure_responsibles,today=today(),week=week_of(today()),
                        translation_enabled=bool(os.environ.get("OPENAI_API_KEY")))
 
     @app.get("/api/overview")
     def overview():
-        return jsonify(queries.overview(db(),request.args))
+        return jsonify(queries.overview(db(),request.args,line))
 
     @app.get("/api/issues")
     def issues():
-        return jsonify(queries.issue_list(db(),request.args))
+        return jsonify(queries.issue_list(db(),request.args,line))
 
     @app.get("/api/issues/export.<fmt>")
     def export_issues(fmt):
         if fmt not in ("xlsx","pdf"):
             raise LookupError("请选择 Excel 或 PDF 导出。")
         from .exports import print_data
-        title = "ZF Saarbrücken · EOL 现场派工单"
+        title = f"ZF Saarbrücken · {line.name} 现场派工单"
         orientation = request.args.get("orientation", "portrait")
         layout = request.args.get("layout", "field")
         if layout not in ("field", "bilingual"):
@@ -128,11 +138,11 @@ def create_app(root=ROOT):
                 return jsonify(error=f"PDF 导出未完成。{exc}"), 503
             mime = "application/pdf"
         return send_file(contents, mimetype=mime, as_attachment=True,
-                         download_name=f"EOL-现场派工单-{today()}-{len(rows)}条-{layout}-{orientation}.{fmt}")
+                         download_name=f"{line.folder}-现场派工单-{today()}-{len(rows)}条-{layout}-{orientation}.{fmt}")
 
     @app.get("/api/issues/<int:uid>")
     def detail(uid):
-        return jsonify(queries.detail(db(),uid))
+        return jsonify(queries.detail(db(),uid,line))
 
     @app.route("/api/issues/<int:uid>/transition",methods=["GET","POST"])
     def transition(uid):
@@ -162,7 +172,7 @@ def create_app(root=ROOT):
     @app.post("/api/issues/<int:uid>/feedback")
     def feedback(uid):
         with writing(db()):
-            records.feedback(db(),root,uid,request.form,request.files.getlist("files"))
+            records.feedback(db(),root,uid,request.form,request.files.getlist("files"),line)
         return jsonify(ok=True)
 
     @app.post("/api/issues/<int:uid>/relations")
@@ -196,7 +206,7 @@ def create_app(root=ROOT):
         if not row:
             raise LookupError("找不到来源版本。")
         path=(root/row["path"]).resolve()
-        if not path.is_relative_to(root/"data"/"sources") or not path.is_file():
+        if not path.is_relative_to(line.data(root)/"sources") or not path.is_file():
             raise LookupError("归档文件缺失。")
         return send_file(path,download_name=row["file"],as_attachment=True)
 
@@ -217,7 +227,7 @@ def create_app(root=ROOT):
         uploads=[u for u in request.files.getlist("files") if u.filename]
         if not uploads:
             raise ValueError("请选择一个或多个 Excel 文件。")
-        folder=root/"data"/"staging"
+        folder=line.data(root)/"staging"
         folder.mkdir(parents=True,exist_ok=True)
         items=[]
         saved=[]
@@ -231,14 +241,14 @@ def create_app(root=ROOT):
                 path=folder/(token+suffix)
                 saved.append(path)
                 upload.save(path)
-                info,decisions,_=importer.inspect_import(db(),root,path,filename,request.form.get("version",""),request.form.get("revision_no",0))
+                info,decisions,_=importer.inspect_import(db(),root,path,filename,request.form.get("version",""),request.form.get("revision_no",0),line)
                 meta=folder/(token+".json")
                 saved.append(meta)
                 meta.write_text(dump({"file":filename,"suffix":suffix,"version":info["version"],
                                       "revision_no":info["revision_no"],"digest":info["digest"]}),"utf-8")
                 examples=[{"row":d["src"]["row"],"no":d["src"]["no"],"station":d["src"]["station"],
                            "mode":d["mode"],"changes":d.get("changes",[]),"reason":d["reason"]} for d in decisions
-                          if d["mode"] in ("new","review") or d.get("changes")]
+                          if d["mode"] in ("new","review","feedback_only") or d.get("changes")]
                 items.append({**info,"token":token,"examples":examples[:25]})
         except Exception:
             for path in saved:
@@ -252,7 +262,7 @@ def create_app(root=ROOT):
         token=str(data.get("token",""))
         if not re.fullmatch(r"[a-f0-9]{32}",token):
             raise ValueError("无效的预览标识。")
-        folder=root/"data"/"staging"
+        folder=line.data(root)/"staging"
         meta=folder/(token+".json")
         if not meta.is_file():
             raise ValueError("预览已提交或失效，请重新选择工作簿。")
@@ -261,7 +271,7 @@ def create_app(root=ROOT):
         if not path.is_file() or file_hash(path)!=info["digest"]:
             raise ValueError("预览文件已改变，请重新选择。")
         result=importer.import_book(db(),root,path,info["file"],data.get("version") or info["version"],
-                                    data.get("revision_no",info["revision_no"]))
+                                    data.get("revision_no",info["revision_no"]),line)
         path.unlink(missing_ok=True)
         meta.unlink(missing_ok=True)
         return jsonify(result)
@@ -269,7 +279,7 @@ def create_app(root=ROOT):
     @app.post("/api/reviews/<int:rid>")
     def review(rid):
         with writing(db()):
-            importer.resolve_review(db(),root,rid,request.get_json() or {})
+            importer.resolve_review(db(),root,rid,request.get_json() or {},line)
         return jsonify(ok=True)
 
     @app.get("/api/tasks")
@@ -289,10 +299,10 @@ def create_app(root=ROOT):
             _, start, end, _ = queries.week_context(request.args)
             if not start <= request.args["as_of"] <= end or request.args["as_of"] > today():
                 raise ValueError("统计截至日期须在所选周内，且不能晚于今天。")
-        summary = queries.overview(db(),request.args)
+        summary = queries.overview(db(),request.args,line)
         refs = {p["number"]:p["id"] for p in summary["plans"]}
         refs.update({e["number"]:e["issue_id"] for e in summary["events"]})
-        return jsonify(text=queries.report(db(),request.args,summary),issue_refs=refs,
+        return jsonify(text=queries.report(db(),request.args,summary,line),issue_refs=refs,
                        start=summary["start"], end=summary["end"], as_of=summary["as_of"])
 
     @app.post("/api/translate")

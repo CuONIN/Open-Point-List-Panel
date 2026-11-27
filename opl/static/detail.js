@@ -1,5 +1,5 @@
 // 展示问题详情并保存现场操作。 / Display issue details and submit field updates.
-import {actorField,api,areaToken,context,dayField,definitionGrid,dialogForm,empty,esc,failure,field,head,icon,issueLink,loading,priorityLabel,qs,setActor,showDialog,stateName,statePill,toast} from "./core.js";
+import {actorField,api,line,areaToken,context,dayField,definitionGrid,dialogForm,empty,esc,failure,field,head,icon,issueLink,loading,priorityLabel,qs,setActor,showDialog,stateName,statePill,toast} from "./core.js";
 
 let current=null, tab="overview", loadSeq=0, detailRequest, transitionRequest;
 const tabs=[["overview","问题详情"],["actions","客户行动"],["feedback","现场反馈"],["history","状态历史"],["relations","关联问题"],["versions","客户版本"]];
@@ -33,7 +33,7 @@ function auditText(value){
   },2);
 }
 function summaryView(d){
-  const details=definitionGrid([["工位",d.station],["八位机器号／AVO",[d.machine,d.avo].filter(Boolean).join(" / ") || "—"],["客户部门 › 类别",[d.department,d.category].filter(Boolean).join(" › ") || "—"],["客户提出者",d.author || "—"],["客户责任方",d.responsible || "待核"],["我方负责人",d.owner || d.tracker || "待分配"],["客户截止日",d.due || "—"],["我方计划",d.plan || "待安排"]]);
+  const details=definitionGrid([["工位",d.station],...(line.phased?[["八位机器号／AVO",[d.machine,d.avo].filter(Boolean).join(" / ") || "—"],["客户部门 › 类别",[d.department,d.category].filter(Boolean).join(" › ") || "—"]]:[["客户工位原文",d.station_cell || "（工位列为空）"],["车型",d.variant || "—"]]),["客户提出者",d.author || "—"],["客户责任方",d.responsible || "待核"],["我方负责人",d.owner || d.tracker || "待分配"],["客户截止日",d.due || "—"],["我方计划",d.plan || "待安排"],...(d.plan_candidate?[["豪森建议日期",d.plan_candidate]]:[])]);
   const prep=definitionGrid([["整改人数／工种",d.people || "—"],["原表整改时间",d.work_time || "—"],["投产单号",d.order_no || "—"]]);
   const hintsByCode={"1":"问题需与 ZF 澄清","2":"已有措施待 ZF 确认","3":"内部确认","4":"待投产","5":"无计划"};
   const hint=hintsByCode[String(d.hint)]?String(d.hint)+" · "+hintsByCode[String(d.hint)]:d.hint;
@@ -78,7 +78,7 @@ function relationView(d){
 }
 function versionView(d){
   const snaps=d.snapshots || [];
-  return section("来源与版本",snaps.length?snaps.map(s=>'<details class="collapse"><summary>'+esc(s.version || "版本未标注")+' · '+esc(s.file || "来源文件")+'</summary><div class="card-body"><div class="flow-line"><span class="cell-sub">'+esc(s.sheet || "")+' · 行 '+esc(s.row ?? "—")+'</span>'+(s.id?'<a class="text-btn" href="/api/imports/'+encodeURIComponent(s.id)+'/source" download>下载原文件</a>':"")+'</div><dl class="info-grid">'+Object.entries(normalizeOwner(s.raw || {})).map(([k,v])=>'<div><dt>'+esc(fieldNames[k] || k)+'</dt><dd class="pre">'+esc(brief(v) || "—")+'</dd></div>').join("")+'</dl></div></details>').join(""):empty("尚无客户版本信息。","file"));
+  return section("来源与版本",snaps.length?snaps.map(s=>'<details class="collapse"><summary>'+esc(s.version || "版本未标注")+' · '+esc(s.file || "来源文件")+'</summary><div class="card-body"><div class="flow-line"><span class="cell-sub">'+esc(s.sheet || "")+' · 行 '+esc(s.row ?? "—")+'</span>'+(s.id?'<a class="text-btn" href="'+esc(s.url)+'" download>下载原文件</a>':"")+'</div><dl class="info-grid">'+Object.entries(normalizeOwner(s.raw || {})).map(([k,v])=>'<div><dt>'+esc(fieldNames[k] || k)+'</dt><dd class="pre">'+esc(brief(v) || "—")+'</dd></div>').join("")+'</dl></div></details>').join(""):empty("尚无客户版本信息。","file"));
 }
 function fillDrawer(){
   const d=current;if(!d)return;
@@ -154,7 +154,7 @@ function editProfile(d){
     async onSave(v){await api("issues/"+d.id+"/profile",{method:"POST",data:requestFields(d,v)});await updated(d.id,"我方资料已保存",v.actor);}});
 }
 function editPlan(d){
-  dialogForm({title:"安排实施计划 · #"+d.number,body:'<div class="form-grid">'+actorField()+dayField()+field({key:"plan",type:"plan",label:"计划日期或日历周",value:d.plan,required:true})+field({key:"owner",label:"我方负责人",value:d.owner || d.tracker,required:true})+field({key:"note",label:"计划行动／调整原因",type:"textarea",required:true})+'</div>',
+  dialogForm({title:"安排实施计划 · #"+d.number,body:'<div class="form-grid">'+actorField()+dayField()+field({key:"plan",type:"plan",label:"计划日期或日历周",value:d.plan || d.plan_candidate,required:true})+field({key:"owner",label:"我方负责人",value:d.owner || d.tracker,required:true})+field({key:"note",label:"计划行动／调整原因",type:"textarea",required:true})+'</div>',
     async onSave(v){await api("issues/"+d.id+"/plan",{method:"POST",data:requestFields(d,v)});await updated(d.id,"计划已保存",v.actor);}});
 }
 function addFeedback(d){

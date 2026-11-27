@@ -1,5 +1,5 @@
 // 维护专项任务并呈现项目周报。 / Maintain specialist tasks and present weekly reports.
-import {api,context,count,dialogForm,empty,esc,failure,field,go,href,icon,issueLink,options,pageTitle,qs,toast,weekLabel,weekTools} from "./core.js";
+import {line,api,context,count,dialogForm,empty,esc,failure,field,go,href,icon,issueLink,options,pageTitle,qs,toast,weekLabel,weekTools} from "./core.js";
 
 let taskItems=[];
 const kindNames={cycle:"节拍整改",safety:"安全检测",report:"周报任务"};
@@ -101,7 +101,7 @@ export async function report(params,signal){
   }).join("\n");
   const lastDay=data.end<context.config.today?data.end:context.config.today;
   const cutoff='<label>统计截至 <input type="date" data-report-cutoff min="'+esc(data.start)+'" max="'+esc(lastDay)+'" value="'+esc(data.as_of)+'"'+(lastDay<data.start?' disabled':'')+'></label>';
-  return '<div class="report-view">'+pageTitle("项目周报",weekLabel(wk)+" · EOL 测试线",weekTools(wk)+cutoff)+
+  return '<div class="report-view">'+pageTitle("项目周报",weekLabel(wk)+" · "+line.name,weekTools(wk)+cutoff)+
     '<div class="stack"><section class="card"><div class="card-head"><div class="head-area">'+icon("report")+'<h2>周报内容</h2></div><div class="tools"><button type="button" class="btn small-btn" data-report-copy>'+icon("copy")+'复制全文</button><button type="button" class="btn small-btn" data-print>'+icon("print")+'打印</button></div></div><pre class="report-output" tabindex="0">'+linked+'</pre></section></div></div>';
 }
 export function bindReport(node,params){

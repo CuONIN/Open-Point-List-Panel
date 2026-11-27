@@ -1,15 +1,15 @@
 // 渲染双语问题表、筛选标签、排序与导出。 / Render the bilingual grid, filter tags, sorting and downloads.
-import {api,areaToken,context,count,empty,esc,go,icon,issueLink,multiKeys,options,pageTitle,priorityLabel,qs,statePill,valuesOf} from "./core.js";
+import {api,apiUrl,line,areaToken,context,count,empty,esc,go,icon,issueLink,multiKeys,options,pageTitle,priorityLabel,qs,statePill,valuesOf} from "./core.js";
 import {distributionTable} from "./overview.js";
 
 const advanced=[
   ["station","工位"],["machine","八位机器号"],["avo","AVO"],["department","客户部门"],
   ["category","客户类别"],["author","客户提出者"],["responsible","客户责任方"],["owner","我方负责人"],["zf","ZF 责任维度"]
-];
+].filter(([key])=>multiKeys.has(key) && (line.phased || key!=="station"));
 const modes=[["current","当前状态"],["occurred","期间进入过"],["latest","最近一次变化"],["asof","截至所选日"],
   ["planned","本周实施计划"],["unreported","本周计划尚未上报"]];
 const scopes=[["ours","我方未结"],["customer","客户未结"],["all","全部客户记录"]];
-const labels=Object.fromEntries([...advanced,["q","关键词"],["area","区域"],["state","我方状态"],["priority","优先级"],["week","统计周"],["as_of","截止日"],["mode","周筛选口径"],["event_kind","事件类型"]]);
+const labels=Object.fromEntries([...advanced,["station","工位"],["q","关键词"],["area","区域"],["state","我方状态"],["priority","优先级"],["week","统计周"],["as_of","截止日"],["mode","周筛选口径"],["event_kind","事件类型"]]);
 let advancedOpen=false,exportOrientation="portrait",exportLayout="field";
 function numberSort(params){return params.sort==="number_asc"?"number_asc":"number_desc";}
 function sortButton(params,cls){
@@ -102,7 +102,7 @@ function filters(p){
   const chips=Object.entries(p).map(([k,v])=>chipsFor(k,v,p)).join("");
   return '<form class="card filters" id="issue-filters"><div class="filters-row"><div class="segment" aria-label="问题范围">'+scopes.map(([k,label])=>'<button type="button" data-scope="'+k+'" aria-pressed="'+(k===scope)+'">'+label+'</button>').join("")+'</div>'+
     '<label class="search-box">'+icon("search")+'<input type="search" name="q" value="'+esc(p.q)+'" aria-label="搜索问题" placeholder="客户号（多个用逗号分隔）、姓名或关键词"></label><button class="btn primary" type="submit">应用筛选</button></div>'+
-    '<div class="filters-row">'+multiField("area","区域",p)+multiField("state","我方状态",p)+multiField("priority","优先级",p)+
+    '<div class="filters-row">'+(line.phased?multiField("area","区域",p):multiField("station","工位",p))+multiField("state","我方状态",p)+multiField("priority","优先级",p)+
     '<button type="button" class="btn" data-toggle-filters aria-expanded="'+hasAdvanced+'">'+icon("filter")+'更多筛选</button><button type="button" class="text-btn" data-reset-filters>'+icon("reset")+'恢复默认筛选</button><small class="muted">同类选项取任一，跨类同时匹配</small></div>'+
     '<div class="filters-grid" id="advanced-filters"'+(hasAdvanced?"":" hidden")+'>'+advanced.map(([k,l])=>multiField(k,l,p)).join("")+
     '<label class="field">周筛选口径<select name="mode">'+options(modes,p.mode || "current")+'</select></label><label class="field">统计周<input type="week" name="week" value="'+esc(p.week || context.config.week)+'"></label><label class="field">截止日<input type="date" name="as_of" value="'+esc(p.as_of)+'"></label></div>'+
@@ -130,10 +130,10 @@ function fieldWork(it){
 }
 function row(it){
   return '<tr><td class="pin1">'+issueLink(it.id,it.number)+'<span class="cell-sub">'+areaToken(it.area)+'</span></td>'+
-    '<td class="pin2"><b>'+esc(it.station || "工位待核")+'</b><span class="cell-sub code">'+esc(it.machine || "—")+'</span><span class="cell-sub">AVO '+esc(it.avo || "—")+'</span></td>'+
+    '<td class="pin2"><b>'+esc(it.station || "工位待核")+'</b>'+(line.phased?'<span class="cell-sub code">'+esc(it.machine || "—")+'</span><span class="cell-sub">AVO '+esc(it.avo || "—")+'</span>':it.station_raw!==it.station?'<span class="cell-sub">'+esc(it.station_raw)+'</span>':'')+'</td>'+
     '<td><div class="line-clamp '+(!it.zh?"muted":"main-cell")+'">'+esc(it.zh || "待翻译")+'</div></td><td><div class="line-clamp"'+(englishText(it)?' lang="en"':'')+'>'+esc(it.en || it.problem || "—")+'</div>'+(englishText(it)?'<span class="cell-sub">英文译文 · 原文见详情</span>':"")+'</td>'+
     '<td>'+priorityLabel(it.priority)+'</td><td><div class="line-clamp">'+esc(it.author || "—")+'</div></td><td><div class="line-clamp">'+esc(latestText(it) || "暂无反馈")+'</div><span class="cell-sub">'+esc(it.latest_day || "")+'</span></td>'+
-    '<td><div>'+esc(it.department || "—")+'</div><span class="cell-sub">'+esc(it.category || "—")+'</span></td>'+
+    '<td>'+(line.phased?'<div>'+esc(it.department || "—")+'</div><span class="cell-sub">'+esc(it.category || "—")+'</span>':esc(it.variant || "—"))+'</td>'+
     '<td>'+esc(it.responsible || "责任方待核")+'<span class="cell-sub">截止 '+esc(it.due || "—")+'</span></td>'+
     '<td class="work-cell">'+fieldWork(it)+'</td></tr>';
 }
@@ -145,12 +145,12 @@ function mobile(it){
 export async function issues(params,signal){
   const res=await api("issues"+qs({...params,scope:scopeOf(params)}),{signal}), items=res.items || [];
   const page=Number(res.page || 1),pages=Math.max(1,Number(res.pages || 1));
-  const table=items.length?'<div class="table-scroll desktop-issues" tabindex="0" aria-label="双语问题表，可横向滚动"><table class="issue-table"><colgroup>'+[81,174,225,230,90,140,184,158,150,300].map(w=>'<col style="width:'+w+'px">').join("")+'</colgroup><thead><tr><th class="pin1" aria-sort="'+(numberSort(params)==="number_asc"?"ascending":"descending")+'">'+sortButton(params,"sort-head")+'</th><th class="pin2">工位／设备</th><th>问题中文</th><th>英文／客户原文</th><th>优先级</th><th>客户提出者</th><th>最近反馈／行动</th><th>客户部门／类别</th><th>客户责任方／截止</th><th>现场处理</th></tr></thead><tbody>'+items.map(row).join("")+'</tbody></table></div><div class="issue-list-mobile">'+items.map(mobile).join("")+'</div>':empty("当前筛选没有匹配的问题。可调整条件或恢复默认筛选。","search");
+  const table=items.length?'<div class="table-scroll desktop-issues" tabindex="0" aria-label="双语问题表，可横向滚动"><table class="issue-table"><colgroup>'+[81,174,225,230,90,140,184,158,150,300].map(w=>'<col style="width:'+w+'px">').join("")+'</colgroup><thead><tr><th class="pin1" aria-sort="'+(numberSort(params)==="number_asc"?"ascending":"descending")+'">'+sortButton(params,"sort-head")+'</th><th class="pin2">工位／设备</th><th>问题中文</th><th>英文／客户原文</th><th>优先级</th><th>客户提出者</th><th>最近反馈／行动</th><th>'+(line.phased?"客户部门／类别":"车型")+'</th><th>客户责任方／截止</th><th>现场处理</th></tr></thead><tbody>'+items.map(row).join("")+'</tbody></table></div><div class="issue-list-mobile">'+items.map(mobile).join("")+'</div>':empty("当前筛选没有匹配的问题。可调整条件或恢复默认筛选。","search");
   const dispatch='<div class="tools export-tools">'+sortButton(params,"btn small-btn mobile-sort")+
     '<label class="paper-choice">派工单内容<select data-layout>'+options([["field","现场精简（中文优先）"],["bilingual","中英对照"]],exportLayout)+'</select></label>'+
     '<label class="paper-choice">纸张<select data-orientation>'+options([["portrait","A4 竖版"],["landscape","A4 横版"]],exportOrientation)+'</select></label>'+
     '<button type="button" class="btn small-btn" data-export="xlsx">'+icon("import")+'导出 Excel</button><button type="button" class="btn small-btn" data-export="pdf">'+icon("import")+'导出 PDF</button></div>';
-  return pageTitle("问题清单","EOL 测试线 · 双语问题跟踪",'<a class="btn" href="#imports">'+icon("import")+'导入清单</a>')+'<div class="stack">'+filters(params)+'<section class="card"><div class="card-head"><h2>问题明细 <span class="tag num">'+count(res.total)+'</span></h2>'+dispatch+'</div><div class="export-status" role="status" aria-live="polite"></div>'+table+
+  return pageTitle("问题清单",line.name+" · 双语问题跟踪",'<a class="btn" href="#imports">'+icon("import")+'导入清单</a>')+'<div class="stack">'+filters(params)+'<section class="card"><div class="card-head"><h2>问题明细 <span class="tag num">'+count(res.total)+'</span></h2>'+dispatch+'</div><div class="export-status" role="status" aria-live="polite"></div>'+table+
     '<div class="pager"><span>第 '+count(page)+' / '+count(pages)+' 页</span><div class="tools"><button type="button" class="btn small-btn" data-page="'+(page-1)+'"'+(page<=1?" disabled":"")+'>'+icon("prev")+'上一页</button><button type="button" class="btn small-btn" data-page="'+(page+1)+'"'+(page>=pages?" disabled":"")+'>下一页'+icon("next")+'</button></div></div></section>'+
     '<section class="card"><details class="collapse"><summary>查看本次筛选的工位统计</summary>'+distributionTable(res.stations || [],"station",params)+'</details></section></div>';
 }
@@ -165,7 +165,7 @@ async function download(format,params,node){
   const orientation=node.querySelector("[data-orientation]").value, layout=node.querySelector("[data-layout]").value;
   msg.className="export-status status-note";msg.textContent="正在按当前筛选生成 "+label+" 派工单…";
   try{
-    const response=await fetch("/api/issues/export."+format+queryForExport(params,orientation,layout),{headers:{Accept:format==="pdf"?"application/pdf":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},credentials:"same-origin",cache:"no-store"});
+    const response=await fetch(apiUrl("issues/export."+format+queryForExport(params,orientation,layout)),{headers:{Accept:format==="pdf"?"application/pdf":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},credentials:"same-origin",cache:"no-store"});
     const type=(response.headers.get("Content-Type") || "").toLowerCase();
     if(!response.ok || type.includes("application/json") || type.includes("text/html")){
       const json=type.includes("json")?await response.json().catch(()=>({})):{};
@@ -174,7 +174,7 @@ async function download(format,params,node){
     const blob=await response.blob();if(!blob.size)throw new Error("导出文件为空，请重试。");
     const disposition=response.headers.get("Content-Disposition") || "";
     const encoded=disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i), ascii=disposition.match(/(?:^|;)\s*filename\s*=\s*(?:"([^"]+)"|([^;]+))/i);
-    let name="EOL-派工单-"+context.config.today+"."+format;
+    let name=line.name+"-派工单-"+context.config.today+"."+format;
     try{if(encoded)name=decodeURIComponent(encoded[1].trim());else if(ascii)name=(ascii[1] || ascii[2]).trim();}catch{ /* Keep the fallback filename. */ }
     const link=document.createElement("a"), url=URL.createObjectURL(blob);
     link.href=url;link.download=name.replace(/[\\/:*?"<>|]/g,"_");document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);

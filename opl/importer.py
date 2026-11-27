@@ -13,7 +13,9 @@ from pathlib import Path
 from unicodedata import normalize
 
 from .excel import StationMap, bilingual, classify_responsible, priority_band, read_book, split_actions
-from .people import internal_owner
+from .lines import EOL, STATOR
+from .stator import StatorStations
+from .people import CUSTOMER_NAMES, customer_author, internal_owner
 from .store import (assign_number, audit, decode, dump, file_hash, iso_day, json_hash, need_issue,
                     now, number_map, today, writing)
 from .workflow import ARCHIVE, append_event, assign_owner, issue_owner
@@ -36,12 +38,15 @@ def observed_version(path):
     match = re.search(r"(?<!\d)(20\d{2})[-_.](\d{2})[-_.](\d{2})(?!\d)",Path(path).name)
     if match:
         return iso_day("-".join(match.groups()),"文件版本日期")
+    european = re.search(r"(?<!\d)(\d{2})[-_.](\d{2})[-_.](20\d{2})(?!\d)", Path(path).name)
+    if european:
+        return iso_day("-".join(reversed(european.groups())), "文件版本日期")
     return ""
 
 
-def source_file(root,path):
+def source_file(root,path,line=EOL):
     digest = file_hash(path)
-    dest = root/"data"/"sources"/(digest + path.suffix.lower())
+    dest = line.data(root)/"sources"/(digest + path.suffix.lower())
     dest.parent.mkdir(parents=True,exist_ok=True)
     if not dest.exists():
         temp = dest.with_name(uuid.uuid4().hex + ".tmp")
@@ -88,16 +93,22 @@ class MatchIndex:
         for base,uid in conn.execute("SELECT base,issue_id FROM numbers"):
             self.by_num[base].add(uid)
 
-    def match(self, row):
+    def match(self, row, within_number=False):
         sig = signature(row)
         key = binding_key(row)
         if key in self.bindings and self.batch_keys[key] == 1:
             return self.bindings[key], [], "已确认来源绑定"
+        number = self.by_num[row["no"]]
         exact = self.by_sig[sig]
+        if within_number:
+            exact = exact & number
+            if len(exact) == 1 and self.batch_keys[key] == 1 and all(sig):
+                return next(iter(exact)), [], "客户编号及完整来源特征相符"
         if all(sig) and len(exact)==1 and self.batch_sigs[sig]==1:
             return next(iter(exact)), [], "工位、日期、作者和原文唯一"
-        number = self.by_num[row["no"]]
         text = self.by_text[sig[3]] if sig[3] else set()
+        if within_number:
+            text = text & number
         meta = self.by_meta[sig[:3]]
         corroborated = []
         for uid in text:
@@ -153,9 +164,9 @@ def statistics():
                 review=0,unchanged=0,translation=0)
 
 
-def inspect_import(conn, root, path, filename, version="", revision_no=0):
+def inspect_import(conn, root, path, filename, version="", revision_no=0, line=EOL):
     """预演匹配和字段差异，遇到歧义时生成待核决策。 / Preview matches and differences, marking ambiguous decisions for review."""
-    kind,sheet,rows = read_book(path)
+    kind,sheet,rows = read_book(path,line)
     if not rows:
         raise ValueError("工作表中没有可识别的问题行。")
     version = version or observed_version(filename)
@@ -176,17 +187,28 @@ def inspect_import(conn, root, path, filename, version="", revision_no=0):
         raise ValueError("同日修订号已经存在，请为不同内容选择新的修订号。")
     if kind!="zf" and not conn.execute("SELECT 1 FROM issues LIMIT 1").fetchone():
         raise ValueError("请先导入客户清单建立问题总账，再补充豪森资料。")
-    stations = StationMap(root)
+    stations = StatorStations() if line == STATOR else StationMap(root)
     index = MatchIndex(conn,kind,rows)
     summary = statistics()
     summary["rows"] = len(rows)
     baseline = kind=="zf" and not last
     decisions = []
     for row in rows:
-        uid,candidates,why = (None,[],"初始客户基线") if baseline else index.match(row)
+        uid,candidates,why = (None,[],"初始客户基线") if baseline else index.match(row, within_number=(line == STATOR and kind != "zf"))
+        if not row["no"].isdigit() and not (uid and index.bindings.get(binding_key(row)) == uid):
+            uid, why = None, "缺少有效客户编号，请核对来源行"
         mode = "match" if uid else "review"
         if not uid and kind=="zf" and not historical and row["no"].isdigit() and (baseline or not candidates):
             mode = "new"
+        if mode == "review" and line == STATOR and kind != "zf" and row["no"].isdigit():
+            # 个别豪森行的描述串到了相邻问题，独立核实其 Action。 / Some descriptions shifted; anchor only the action to the numbered customer row.
+            anchors = index.by_num[row["no"]] & index.by_meta[signature(row)[:3]]
+            if len(anchors) == 1:
+                target = next(iter(anchors))
+                prior_action = index.customers[target]["action"].strip()
+                if prior_action and prior_action in row["action"]:
+                    mode, uid, candidates = "feedback_only", target, [target]
+                    why = "编号、工位及客户行动相符，问题描述不一致；已单独核对行动，其余字段待确认"
         if historical:
             mode = "archive"
         decisions.append(dict(mode=mode,id=uid,candidates=candidates,reason=why,src=row))
@@ -201,12 +223,14 @@ def inspect_import(conn, root, path, filename, version="", revision_no=0):
         if mode=="match":
             found.add(uid)
             summary["matched"]+=1
-        if mode=="review":
+        if mode in ("review","feedback_only"):
             summary["review"]+=1
         if mode=="new":
             summary["new"]+=1
         if kind=="zf" and mode in ("match","new"):
             row = station_fields(src,stations)
+            if uid and not row["no"].isdigit():
+                row["no"] = index.customers[uid]["no"]
             item["customer"] = row
             if not row.get("embedded_zh") and (not uid or norm(row["problem"])!=norm(index.customers[uid]["problem"])):
                 summary["translation"]+=1
@@ -270,10 +294,10 @@ def sync_actions(conn,uid,src,batch,kind,changed=True):
                           item["date_raw"],item["author"],pos,batch))
 
 
-def apply_customer(conn, root, batch, src, info, uid=None, customer=None):
+def apply_customer(conn, root, batch, src, info, uid=None, customer=None, line=EOL):
     """复用内部 ID，仅在生效的客户事实要求时触发自动流转。 / Retain the issue ID and transition only when effective customer facts require it."""
-    row = customer or station_fields(src,StationMap(root))
-    base = src["no"]
+    row = customer or station_fields(src, StatorStations() if line == STATOR else StationMap(root))
+    base = row["no"]
     if not base.isdigit():
         raise ValueError("客户新增行需要有效的客户编号。")
     row["no"] = base
@@ -328,7 +352,62 @@ def apply_customer(conn, root, batch, src, info, uid=None, customer=None):
     return uid
 
 
-def enrich(conn, uid, src, batch, sid, kind, day):
+def suggest(conn, batch, sid, uid, kind, reason, data):
+    """相同的待核建议只提示一次。 / Keep one review for the same issue and evidence."""
+    existing = conn.execute("SELECT 1 FROM reviews WHERE kind=? AND candidates=? AND data=?",
+                            (kind, dump([uid]), dump(data))).fetchone()
+    if not existing:
+        add_review(conn,batch,sid,kind,reason,data,[uid])
+
+
+def save_stator_feedback(conn, uid, day, text, sid):
+    """用业务日期与正文去重，来源行可追溯。 / Deduplicate by date and note while retaining source provenance."""
+    existing = conn.execute("SELECT note FROM feedback WHERE issue_id=? AND day=? AND source LIKE 'haosen_action:%'",
+                            (uid,day))
+    if any(norm(row[0]) == norm(text) for row in existing):
+        return
+    conn.execute("INSERT INTO feedback(issue_id,day,actor,note,source,recorded) VALUES(?,?,?,?,?,?)",
+                 (uid,day,"豪森清单",text,f"haosen_action:{sid}",now()))
+    conn.execute("UPDATE issues SET revision=revision+1 WHERE id=?", (uid,))
+
+
+def stator_actions(conn, uid, src, customer, batch, sid):
+    """逐段区分共同行动、译文与豪森新增反馈。 / Compare source blocks before assigning feedback or translations."""
+    local = src["action"].strip()
+    if not local or norm(local) == norm(customer["action"]):
+        return
+    # 较旧的豪森版可能引用已从最新客户表移除的行动。 / Older supplements may quote retired customer actions.
+    historical = conn.execute("""SELECT s.fields FROM source_rows s JOIN batches b ON b.id=s.batch_id
+                                 WHERE s.issue_id=? AND b.kind='zf'""", (uid,))
+    sources = {decode(row[0]).get("action","").strip() for row in historical}
+    sources.add(customer["action"].strip())
+    # 按整行消去连续的客户原文，客户行动也可能没有日期。 / Remove complete quoted lines, including undated customer text.
+    remaining = local.splitlines()
+    for source in sorted(filter(None,sources),key=len,reverse=True):
+        quoted = [norm(s) for s in source.splitlines()]
+        for pos in range(len(remaining)-len(quoted),-1,-1):
+            if [norm(s) for s in remaining[pos:pos+len(quoted)]] == quoted:
+                del remaining[pos:pos+len(quoted)]
+    records = conn.execute("SELECT id,original,day,zh FROM actions WHERE issue_id=?", (uid,)).fetchall()
+    for entry in split_actions("\n".join(remaining)):
+        original, zh, day = entry["original"], entry["zh"], entry["date"]
+        matches = [a for a in records if original and norm(a["original"]) == norm(original) and a["day"] == day]
+        if len(matches) == 1:
+            if zh and not matches[0]["zh"]:
+                conn.execute("UPDATE actions SET zh=? WHERE id=?", (zh,matches[0]["id"]))
+            continue
+        note = "\n".join(filter(None,(original,zh))).strip(" ：:")
+        if not note:
+            continue
+        # 同日纯中文可能是译文；缺日期或仅外文的差异也留给现场。 / Same-day Chinese may be a translation; review ambiguous additions.
+        if day and day <= today() and zh and not original and not any(a["day"] == day for a in records):
+            save_stator_feedback(conn,uid,day,note,sid)
+        else:
+            suggest(conn,batch,sid,uid,"field_action","请核对豪森 Action 的来源及日期",
+                    {"text":entry["raw"], "day":day, "note":note})
+
+
+def enrich(conn, uid, src, batch, sid, kind, day, line=EOL):
     """补充译文和准备信息，保留人工值并标记冲突。 / Fill translations and preparation fields while flagging conflicts with existing values."""
     issue = need_issue(conn,uid)
     local = decode(issue["local"])
@@ -336,6 +415,15 @@ def enrich(conn, uid, src, batch, sid, kind, day):
     original,zh = bilingual(src["problem"])
     proposed = {k:src.get(k,"") for k in ("owner","people","work_time","order_no","hint","note")}
     proposed["owner"] = internal_owner(proposed["owner"])
+    if line == STATOR:
+        names = re.split(r"[/、,，;；]+", proposed["owner"])
+        contacts = [n for n in names if customer_author(n) in CUSTOMER_NAMES.values()]
+        if contacts:
+            proposed["owner"] = "/".join(n.strip() for n in names if n and n not in contacts)
+            suggest(conn,batch,sid,uid,"contact","负责人栏中含客户联系人",{"text":" / ".join(contacts)})
+        if src["due"] and src["due"] != customer["due"]:
+            proposed["plan_candidate"] = src["due"]
+        stator_actions(conn,uid,src,customer,batch,sid)
     if zh and norm(original)==norm(customer["problem"]):
         proposed["zh"] = zh
     changes = {}
@@ -356,23 +444,26 @@ def enrich(conn, uid, src, batch, sid, kind, day):
                             (uid,src["note"])).fetchone():
             conn.execute("INSERT INTO feedback(issue_id,day,actor,note,source,recorded) VALUES(?,?,?,?,?,?)",
                          (uid,day,"豪森清单",src["note"],kind,now()))
-    sync_actions(conn,uid,src,batch,kind)
+    if line != STATOR:
+        sync_actions(conn,uid,src,batch,kind)
     if changes:
         conn.execute("UPDATE issues SET local=?,revision=revision+1 WHERE id=?",(dump(local),uid))
         audit(conn,uid,day,"豪森清单","supplement",{"batch":batch,"added":changes})
 
 
-def import_book(conn,root,path,filename=None,version="",revision_no=0):
+def import_book(conn,root,path,filename=None,version="",revision_no=0,line=EOL):
     """归档原件并在一个写事务内提交整批行。 / Archive the original and commit a whole batch in one transaction."""
     filename = filename or path.name
-    digest,relative = source_file(root,path)
-    archived=root/relative
-    if file_hash(archived)!=digest:
-        raise ValueError("工作簿在读取过程中发生了变化，请保存完毕后重新导入。")
+    initial_digest = file_hash(path)
     with writing(conn):
-        info,decisions,missing = inspect_import(conn,root,archived,filename,version,revision_no)
+        info,decisions,missing = inspect_import(conn,root,path,filename,version,revision_no,line)
+        if info["digest"] != initial_digest:
+            raise ValueError("工作簿在读取过程中发生了变化，请保存完毕后重新导入。")
         if info["duplicate"]:
             return info
+        digest,relative = source_file(root,path,line)
+        if digest != initial_digest or file_hash(root/relative) != digest:
+            raise ValueError("工作簿在归档过程中发生了变化，请保存完毕后重新导入。")
         kind,day = info["kind"],info["version"]
         batch = conn.execute("""INSERT INTO batches(file,kind,version,revision_no,digest,path,sheet,applied,summary,recorded)
                               VALUES(?,?,?,?,?,?,?,?,?,?)""",(filename,kind,day,info["revision_no"],digest,relative,
@@ -386,7 +477,10 @@ def import_book(conn,root,path,filename=None,version="",revision_no=0):
                 if norm(src["status"]) not in ("offen","in arbeit","erledigt") or classify_responsible(src["responsible"])=="unknown":
                     add_review(conn,batch,sid,"customer_value","客户状态或责任方待核对",{},[uid])
             elif kind!="zf" and mode=="match":
-                enrich(conn,uid,src,batch,sid,kind,day)
+                enrich(conn,uid,src,batch,sid,kind,day,line)
+            elif mode=="feedback_only":
+                stator_actions(conn,uid,src,decode(need_issue(conn,uid)["customer"]),batch,sid)
+                add_review(conn,batch,sid,"match",item["reason"],{"action_issue":uid},[uid])
             elif mode=="review":
                 add_review(conn,batch,sid,"match",item["reason"],{},item["candidates"])
             if uid:
@@ -397,7 +491,7 @@ def import_book(conn,root,path,filename=None,version="",revision_no=0):
         return info
 
 
-def resolve_review(conn,root,rid,data):
+def resolve_review(conn,root,rid,data,line=EOL):
     r = conn.execute("""SELECT r.*,b.kind AS source_kind,b.version,b.applied,b.revision_no,s.fields AS src
                       FROM reviews r LEFT JOIN batches b ON b.id=r.batch_id
                       LEFT JOIN source_rows s ON s.id=r.source_id WHERE r.id=?""",(rid,)).fetchone()
@@ -422,6 +516,23 @@ def resolve_review(conn,root,rid,data):
         sync_actions(conn,uid,{"action":extra["action"]},r["batch_id"],"zf")
         conn.execute("UPDATE issues SET revision=revision+1 WHERE id=?",(uid,))
         audit(conn,uid,today(),actor,"accepted_customer_actions",{"previous":previous,"batch":r["batch_id"]})
+    elif r["kind"]=="field_action" and decision=="translation" and uid in ids:
+        aid = int(data.get("action_id") or 0)
+        action = conn.execute("SELECT id,zh FROM actions WHERE id=? AND issue_id=? AND active=1",
+                              (aid,uid)).fetchone()
+        if not action:
+            raise ValueError("请选择当前问题的一条有效客户行动。")
+        zh = str(data.get("translation") or "").strip()
+        if not zh or (action["zh"] and action["zh"] != zh):
+            raise ValueError("请填写译文。已有不同译文时请在问题详情核对。")
+        conn.execute("UPDATE actions SET zh=?,manual=1 WHERE id=?", (zh,aid))
+        conn.execute("UPDATE issues SET revision=revision+1 WHERE id=?", (uid,))
+        audit(conn,uid,today(),actor,"accepted_action_translation",{"action_id":aid,"source_row":r["source_id"],"zh":zh})
+    elif r["kind"]=="field_action" and decision=="accept" and uid in ids:
+        event_day = iso_day(data.get("day") or extra.get("day"), "现场反馈日期")
+        if event_day > today():
+            raise ValueError("反馈日期不能晚于今天。")
+        save_stator_feedback(conn,uid,event_day,extra.get("note",extra["text"]),r["source_id"])
     elif r["kind"]=="fields" and decision in ("bind","accept"):
         if uid not in ids:
             raise ValueError("字段冲突须在原问题上处理。")
@@ -443,11 +554,21 @@ def resolve_review(conn,root,rid,data):
             audit(conn,uid,today(),actor,"profile",{"old":old,"new":local})
     elif r["kind"]=="match" and decision in ("bind","new"):
         src = decode(r["src"])
+        identity = binding_key(src)
         kind = r["source_kind"]
         if decision=="new" and kind!="zf":
             raise ValueError("新增正式问题需要客户来源。")
+        if extra.get("action_issue") and uid != extra["action_issue"]:
+            raise ValueError("已核实行动的归属，请在同一问题上确认其余字段。")
         if decision=="bind" and not uid:
             raise ValueError("请选择客户问题。")
+        if not src["no"].isdigit() and kind == "zf":
+            if decision == "new":
+                src["no"] = str(data.get("number", "")).strip()
+                if not src["no"].isdigit():
+                    raise ValueError("请输入核实后的客户编号。")
+            elif uid:
+                src["no"] = need_issue(conn,uid)["base"]
         if decision=="new":
             uid = None
         if uid and conn.execute("SELECT 1 FROM source_rows WHERE batch_id=? AND issue_id=? AND id<>?",
@@ -457,14 +578,14 @@ def resolve_review(conn,root,rid,data):
         if kind=="zf":
             latest = conn.execute("SELECT id FROM batches WHERE kind='zf' AND applied=1 ORDER BY version DESC,revision_no DESC LIMIT 1").fetchone()
             if latest["id"]==r["batch_id"]:
-                uid = apply_customer(conn,root,r["batch_id"],src,info,uid)
+                uid = apply_customer(conn,root,r["batch_id"],src,info,uid,line=line)
             elif not uid:
                 raise ValueError("历史客户行请绑定已有问题，新增请在生效版处理。")
         else:
-            enrich(conn,uid,src,r["batch_id"],r["source_id"],kind,r["version"])
+            enrich(conn,uid,src,r["batch_id"],r["source_id"],kind,r["version"],line)
         conn.execute("UPDATE source_rows SET issue_id=? WHERE id=?",(uid,r["source_id"]))
         conn.execute("INSERT INTO bindings VALUES(?,?,?) ON CONFLICT(kind,identity) DO UPDATE SET issue_id=excluded.issue_id",
-                     (kind,binding_key(src),uid))
+                     (kind,identity,uid))
     elif r["kind"]=="file" and decision=="bind" and uid:
         from .records import link_file
         link_file(conn,uid,extra["file_id"])

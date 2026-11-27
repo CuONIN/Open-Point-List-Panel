@@ -14,6 +14,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.datetime import from_excel
 from openpyxl.utils.exceptions import InvalidFileException
 
+from .lines import EOL, STATOR
+from .stator import variant_station
 from .stations import StationMap
 
 
@@ -85,7 +87,7 @@ _REQUIRED = {"no", "station", "problem", "responsible", "status"}
 _DATE_FIELDS = ("date", "changed_on", "due")
 
 
-def _header_layout(values):
+def _header_layout(values, line=EOL):
     columns = {}
     last = -1
     boundary = len(values)
@@ -101,6 +103,13 @@ def _header_layout(values):
             key = "hint"
         else:
             key = _HEADER_NAMES.get(label)
+        if line == STATOR:
+            if label == "station number":
+                key = "station"
+            elif label == "variant":
+                key = "variant"
+            elif key == "date" and "responsible" in columns and "status" not in columns:
+                key = "due"
         if key == "date" and ("changed_by" in columns or ("date" in columns and "status" in columns)):
             key = "changed_on"
         if key is not None and key not in columns:
@@ -114,7 +123,25 @@ def _header_layout(values):
     return columns, width
 
 
-def _find_sheet(book):
+def stator_sheet(sheet):
+    """核对工作表及其项目栏。 / Verify the worksheet and its project designation."""
+    if _normalized(sheet.title) not in {"open points list", "stator housing"}:
+        return False
+    for row in sheet.iter_rows(max_row=9, max_col=24, values_only=True):
+        if any(_normalized(value) in {"pa stator housing", "stator housing"} for value in row):
+            return True
+    return False
+
+
+def legacy_stator_book(path):
+    """识别原 EOL 目录内单独的定子资料。 / Route dedicated PAL books found in legacy EOL folders."""
+    with closing(load_workbook(path, read_only=True, data_only=True, keep_links=False)) as book:
+        if any(re.fullmatch(r"list of defects|end of line(?:\s*\(\d+\))?|eol", _normalized(s)) for s in book.sheetnames):
+            return False
+        return any(stator_sheet(s) for s in book)
+
+
+def _find_sheet(book, line=EOL):
     named = [
         sheet for sheet in book
         if re.fullmatch(r"list of defects|end of line(?:\s*\(\d+\))?|eol", _normalized(sheet.title))
@@ -123,19 +150,23 @@ def _find_sheet(book):
     candidates = named or [
         s for s in book if s.sheet_state == "visible" and not other_lines.search(s.title)
     ]
+    if line == STATOR:
+        candidates = [s for s in book if stator_sheet(s)]
+    else:
+        candidates = [s for s in candidates if not stator_sheet(s)]
     matches = []
     for sheet in candidates:
         for index, row in enumerate(
             sheet.iter_rows(max_row=min(sheet.max_row or 60, 60), max_col=80, values_only=True), 1
         ):
-            layout = _header_layout(row)
+            layout = _header_layout(row, line)
             if layout:
                 matches.append((sheet, index, *layout))
                 break
     if len(matches) > 1:
-        raise ValueError("找到多张问题清单表，无法确定 EOL 来源：" + "、".join(x[0].title for x in matches))
+        raise ValueError("找到多张问题清单表，无法确定当前线体来源：" + "、".join(x[0].title for x in matches))
     if not matches:
-        raise ValueError("找不到 EOL 问题表头。请检查问题编号、工位、Problem、Responsible 和 Status 列。")
+        raise ValueError(f"找不到 {line.name} 问题表头。请检查线体、项目名称及问题表。")
     return matches[0]
 
 
@@ -196,7 +227,7 @@ def _parse_date(raw, slash_order=None):
     return _iso(yyyy, bb, aa)
 
 
-def read_book(path):
+def read_book(path, line=EOL):
     """返回来源类型、原始工作表名和问题行，已确认日期使用 ISO 格式。 / Return (source kind, exact worksheet name, issue rows); dates are ISO when known."""
     path = Path(path)
     if path.name.startswith("~$"):
@@ -206,20 +237,29 @@ def read_book(path):
     except (InvalidFileException, BadZipFile, KeyError) as exc:
         raise ValueError("无法读取此 Excel 工作簿，请提供有效的 .xlsx 或 .xlsm 文件。") from exc
     with closing(wb):
-        sheet, header, columns, width = _find_sheet(wb)
+        sheet, header, columns, width = _find_sheet(wb, line)
         kind = "zf"
         if "hint" in columns:
             kind = "haosen_macro"
         elif {"owner", "people", "work_time", "order_no", "note"} & columns.keys():
             kind = "haosen"
         rows = []
-        for line, values in enumerate(
+        for row_no, values in enumerate(
             sheet.iter_rows(min_row=header + 1, max_col=width, values_only=True), header + 1
         ):
             item = {key: _text(values[columns[key]]) if key in columns else "" for key in _HEADERS}
-            if not _looks_like_record(item):
+            if line == STATOR:
+                variant = _text(values[columns["variant"]]) if "variant" in columns else ""
+                item["station_cell"] = item["station"]
+                item["variant"] = variant
+                if variant_station(variant) and item["station"].casefold() in {"", "bmw"}:
+                    item["variant"], item["station"] = item["station"], variant
+                # 保留无号描述供复核，忽略表尾图例。 / Retain unnumbered descriptions; exclude the footer.
+                if _normalized(item["no"]).startswith(("legend", "background information")):
+                    break
+            if not _looks_like_record(item) and not (line == STATOR and not item["no"] and item["problem"]):
                 continue
-            item["row"] = line
+            item["row"] = row_no
             item["raw"] = {get_column_letter(i): _snapshot_value(v)
                            for i, v in enumerate(values, 1) if v is not None}
             for key in _DATE_FIELDS:
@@ -228,6 +268,11 @@ def read_book(path):
                     item[key] = value.date().isoformat()
                 elif isinstance(value, (int, float)) and 20_000 <= value <= 80_000:
                     item[key] = from_excel(value, wb.epoch).date().isoformat()
+            if line == STATOR and _parse_date(item["changed_by"]):
+                misplaced = item["changed_by"]
+                name_or_date = item["changed_on"]
+                item["changed_by"] = "" if _parse_date(name_or_date) else name_or_date
+                item["changed_on"] = name_or_date if _parse_date(name_or_date) else misplaced
             rows.append(item)
         for key in _DATE_FIELDS:
             order = _date_order(row[key] for row in rows)

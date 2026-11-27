@@ -11,6 +11,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .lines import EOL
+
 ROOT = Path(__file__).resolve().parents[1]
 BERLIN = ZoneInfo("Europe/Berlin")
 
@@ -135,10 +137,10 @@ CREATE INDEX IF NOT EXISTS issue_station ON issues(json_extract(customer,'$.stat
 """
 
 
-def connect(root=ROOT):
+def connect(root=ROOT, line=EOL):
     root = Path(root)
-    (root / "data").mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(root / "data" / "opl.sqlite3", timeout=30, isolation_level=None)
+    line.data(root).mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(line.data(root) / "opl.sqlite3", timeout=30, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=30000")

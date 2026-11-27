@@ -114,12 +114,12 @@ def print_data(conn, params):
             followup.append("投产进度　待投产" if order_no == "待投产" else "投产单号\n" + order_no)
         management = "\n".join(followup)
         row["print_fields"] = [
-            row["number"], " › ".join(x for x in (row["department"],row["category"]) if x) or "—",
+            row["number"], " › ".join(x for x in (row["department"],row["category"]) if x) or row["variant"] or "—",
             "\n".join(x for x in (row["machine"],row["station"]) if x) or "待核", row["zh"] or "待翻译",
             original or "—", "\n".join(technical) or "—", management,
         ]
         # 紧凑版将纸面宽度留给技术正文，缺译文时回退客户原文。 / Reserve paper width for instructions; fall back to source text.
-        source_category = row["category"] or row["department"]
+        source_category = row["category"] or row["department"] or row["variant"]
         category = FIELD_CATEGORIES.get(source_category, source_category)
         description = row["zh"] or row["problem"] or "来源未填写"
         row["field_print"] = [

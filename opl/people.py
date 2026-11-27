@@ -4,13 +4,17 @@
 import re
 
 
+CUSTOMER_NAMES = {s.split()[-1].casefold(): s for s in (
+    "Arta Iseni", "Mathias Eisenhut", "Elias Paltz", "Paul Klein", "Stefan Vinzent")}
+
+
 def customer_author(raw):
     """客户原值留在快照里，仅转换显示顺序。 / Preserve raw evidence; display given name first."""
     name = re.sub(r"\s*\(ZF[^()]*\)\s*$", "", str(raw or ""), flags=re.I).strip()
     if name.count(",") == 1:
         family, given = name.split(",", 1)
-        return " ".join(x.strip() for x in (given, family) if x.strip())
-    return name
+        name = " ".join(x.strip() for x in (given, family) if x.strip())
+    return "/".join(CUSTOMER_NAMES.get(part.strip().casefold(), part.strip()) for part in name.split("/"))
 
 
 def internal_owner(value):

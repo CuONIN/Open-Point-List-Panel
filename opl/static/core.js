@@ -1,6 +1,9 @@
 // 共享请求、路由、表单及界面组件。 / Shared requests, routing, forms and controls.
+const {line: key, name, prefix, phased} = document.documentElement.dataset;
+export const line = {key, name, prefix, phased: phased === "1"};
+export const apiUrl = endpoint => line.prefix + "/api/" + endpoint;
 export const context = {config: {}, actor: "", refresh: async () => {}, refreshConfig: async () => {}};
-export const multiKeys = new Set(["area","state","priority","station","machine","avo","department","category","responsible","owner","author","zf"]);
+export const multiKeys = new Set(["state","priority","station","responsible","owner","author","zf",...(line.phased?["area","machine","avo","department","category"]:[])]);
 export function valuesOf(value) {
   return [...new Set((Array.isArray(value)?value:[value]).filter(v=>v!==undefined && v!==null && v!=="").map(String))];
 }
@@ -62,7 +65,7 @@ export async function api(endpoint, options = {}) {
   if (data instanceof FormData) init.body = data;
   else if (data !== undefined) { headers["Content-Type"]="application/json"; init.body=JSON.stringify(data); }
   let response;
-  try { response = await fetch("/api/" + endpoint, init); }
+  try { response = await fetch(apiUrl(endpoint), init); }
   catch (error) { if (error.name === "AbortError") throw error; throw new Error("无法连接本地工作台，请确认应用仍在运行。"); }
   let body;
   try { body = await response.json(); }
@@ -133,6 +136,7 @@ export function statePill(key,label,issueId) {
     : '<span class="pill"'+style+'>'+name+'</span>';
 }
 export function areaToken(area) {
+  if(!line.phased)return "";
   const cls=["S1","S2","AGV","General"].includes(area) ? area : "";
   return '<span class="area-token area-'+cls+'">'+esc(area || "待核")+'</span>';
 }

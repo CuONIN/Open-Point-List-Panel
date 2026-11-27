@@ -7,7 +7,8 @@ from difflib import SequenceMatcher
 import re
 
 from .excel import classify_responsible
-from .people import customer_author, internal_owner
+from .lines import EOL
+from .people import CUSTOMER_NAMES, customer_author, internal_owner
 from .stations import short_agv_machine, station_label
 from .store import decode, iso_day, need_issue, number_map, today, week_bounds, week_of
 from .workflow import ARCHIVE, STATES, allowed, issue_owner, state_label
@@ -95,7 +96,7 @@ def rows_at(conn, cutoff=None, only=None, *, source=False):
         row={k:customer.get(k,"") for k in (
             "station","machine","avo","area","priority","priority_raw","department","category","responsible",
             "resp_class","problem","due","author","date","station_review","station_raw","status","changed_on")}
-        row.update({k:local.get(k,"") for k in ("people","work_time","order_no","hint","note","en")})
+        row.update({k:local.get(k,"") for k in ("people","work_time","order_no","hint","note","en","plan_candidate")})
         row["author_raw"] = row["author"]
         row["author"] = customer_author(row["author"])
         row["machine"] = short_agv_machine(row["station_raw"]) or row["machine"]
@@ -105,6 +106,9 @@ def rows_at(conn, cutoff=None, only=None, *, source=False):
         if row["station"] == "AGV" or row["area"] == "AGV" or row["machine"] in ("1220", "1221"):
             row["station"] = "AGV"
             row["area"] = "S2" if str(row["machine"]).endswith("1221") else "S1"
+        row["station_names"] = customer.get("station_names") or [row["station"]]
+        row["variant"] = customer.get("variant","")
+        row["station_cell"] = customer.get("station_cell",row["station_raw"])
         row["owner"] = issue_owner(local)
         if cutoff < today() and payload.get("tracker") and "owner" not in local.get("manual_fields", ()):
             row["owner"] = internal_owner(payload["tracker"])
@@ -131,9 +135,11 @@ def group_by(rows,key):
     for name in fixed.get(key, ()):
         groups[name]
     for row in rows:
-        counts=groups[row.get(key) or "待核"]
-        counts["total"]+=1
-        counts[row["priority"]]+=1
+        names = row["station_names"] if key == "station" else [row.get(key)]
+        for name in names:
+            counts=groups[name or "待核"]
+            counts["total"]+=1
+            counts[row["priority"]]+=1
     result=[{key:k,**{p:c[p] for p in ("total","High","Medium","Low","待核")}} for k,c in groups.items()]
     if key not in fixed:
         result.sort(key=lambda r:(-r["total"],r[key]))
@@ -298,6 +304,10 @@ def filtered_issues(conn, params, *, source=False):
             values.add("")
         if key == "owner":
             rows = [r for r in rows if any(v.casefold() in values for v in [r["owner"], *owner_names(r["owner"])])]
+        elif key == "station":
+            rows = [r for r in rows if any(v.casefold() in values for v in r["station_names"])]
+        elif key == "author":
+            rows = [r for r in rows if any(v.casefold() in values for v in author_choices(r["author"]))]
         elif key == "area" and "agv" in values:
             # 旧书签兼容原 AGV 设备集合。 / Preserve pre-split area bookmarks.
             rows = [r for r in rows if r["station"] == "AGV" or r["area"].casefold() in values]
@@ -330,24 +340,35 @@ def filtered_issues(conn, params, *, source=False):
     return rows, cutoff
 
 
-def issue_list(conn, params):
+def issue_list(conn, params, line=EOL):
     rows, cutoff = filtered_issues(conn, params)
     limit=min(max(int(params.get("limit") or 40),1),300)
     total=len(rows)
     pages=max(1,(total+limit-1)//limit)
     page=min(max(int(params.get("page") or 1),1),pages)
     return dict(items=rows[(page-1)*limit:page*limit],total=total,page=page,pages=pages,
-                stations=group_by(rows,"station"),areas=group_by(rows,"area"),as_of=cutoff)
+                stations=group_by(rows,"station"),areas=group_by(rows,"area") if line.phased else [],as_of=cutoff)
 
 
-def options(conn):
+def author_choices(value):
+    """部门组合保留原名，也可以按其中的客户姓名筛选。 / Preserve compound teams and expose known customer members."""
+    return [value, *(part for part in value.split("/") if part != value and part in CUSTOMER_NAMES.values())]
+
+
+def options(conn, line=EOL):
     """按实际字段值建筛选菜单，区分空值、全选与没有勾选。 / Preserve blank values as selectable options."""
     keys = ("station","machine","avo","area","author","department","category","responsible","owner","priority")
+    if not line.phased:
+        keys = [k for k in keys if k not in ("area", "machine", "avo", "department", "category")]
     choices = {key: set() for key in keys}
     zf_choices = {"none", "pure", "joint"}
     for row in rows_at(conn):
         for key in keys:
             values = owner_names(row[key]) if key == "owner" else [row[key]]
+            if key == "station":
+                values = row["station_names"]
+            elif key == "author":
+                values = author_choices(row["author"])
             choices[key].update(value or BLANK for value in (values or [BLANK]))
         if row["resp_class"] not in ("zf", "haosen", "joint"):
             zf_choices.add(BLANK)
@@ -355,7 +376,7 @@ def options(conn):
     return {key: sorted(values) for key, values in choices.items()}
 
 
-def overview(conn,params):
+def overview(conn,params,line=EOL):
     """对比上周末存量，并按问题对本周流转去重。 / Compare the previous closing balance and deduplicate weekly transitions by issue."""
     week,start,end,cutoff=week_context(params)
     rows=rows_at(conn,cutoff)
@@ -386,7 +407,7 @@ def overview(conn,params):
                             delta=None if prior_total is None else len(active)-prior_total,new=len(per_reason["new"]),
                             reopened=len(per_reason["reopened"]|per_reason["returned"]),
                             returned=len(per_reason["returned"]),closed=len(per_state["closed"]),transferred=len(per_state["zf_only"])),
-                areas=group_by(active,"area"),stations=group_by(active,"station"),
+                areas=group_by(active,"area") if line.phased else [],stations=group_by(active,"station"),
                 counts={s:latest_counts[s] for s in STATES},stocks=dict(Counter(r["state"] for r in rows)),
                 events=current_events,plans=plans,baseline=first)
 
@@ -409,11 +430,11 @@ def links_for(conn, uid, numbers):
     return result
 
 
-def file_view(r):
-    return {"id":r["id"],"name":r["name"],"mime":r["mime"],"url":f"/api/files/{r['id']}"}
+def file_view(r, prefix=""):
+    return {"id":r["id"],"name":r["name"],"mime":r["mime"],"url":f"{prefix}/api/files/{r['id']}"}
 
 
-def detail(conn,uid):
+def detail(conn,uid,line=EOL):
     issue=need_issue(conn,uid)
     rows=rows_at(conn,only=uid)
     if not rows:
@@ -426,7 +447,7 @@ def detail(conn,uid):
     files_by_fb=defaultdict(list)
     attachments={}
     for f in conn.execute("SELECT f.*,l.feedback_id FROM file_links l JOIN files f ON f.id=l.file_id WHERE issue_id=?",(uid,)):
-        v=file_view(f)
+        v=file_view(f,line.prefix)
         attachments[f["id"]]=v
         files_by_fb[f["feedback_id"]].append(v)
     item["attachments"]=list(attachments.values())
@@ -440,7 +461,7 @@ def detail(conn,uid):
         raw=decode(s["fields"])
         item["snapshots"].append({"id":s["id"],"file":s["file"],"sheet":s["sheet"],"row":s["row_no"],
                                   "version":s["version"],"kind":s["kind"],"applied":bool(s["applied"]),
-                                  "revision_no":s["revision_no"],"raw":raw,"url":f"/api/imports/{s['id']}/source"})
+                                  "revision_no":s["revision_no"],"raw":raw,"url":f"{line.prefix}/api/imports/{s['id']}/source"})
     item["plan_history"]=[dict(r) for r in conn.execute(
         "SELECT id,day,plan,tracker AS owner,note,actor,recorded FROM plans WHERE issue_id=? ORDER BY day DESC,id DESC",(uid,))]
     item["audit"]=[{**dict(r),"payload":decode(r["payload"])} for r in conn.execute(
@@ -489,7 +510,7 @@ def review_list(conn, page=1, limit=100, status="open"):
         data=decode(r["data"],{})
         matches=[candidate(i) for i in decode(r["candidates"],[])]
         reviews.append(dict(id=r["id"],kind=r["kind"],reason=r["reason"],source_no=src.get("no",data.get("no","")),
-                            station=src.get("station",""),problem=src.get("problem",data.get("file","")),
+                            station=src.get("station",""),problem=src.get("problem",data.get("file","")),source_action=src.get("action",""),
                             candidates=matches,data=data,file=r["file"] or data.get("file",""),row=r["row_no"],
                             version=r["version"],date=src.get("date",""),author=src.get("author",""),
                             source_kind=(conn.execute("SELECT kind FROM batches WHERE id=?",(r["batch_id"],)).fetchone()[0] if r["batch_id"] else "")))
@@ -517,26 +538,28 @@ def phase_summary(rows, summary):
     return groups
 
 
-def report(conn,params,summary=None):
+def report(conn,params,summary=None,line=EOL):
     from .records import tasks
-    o=summary if summary is not None else overview(conn,params)
+    o=summary if summary is not None else overview(conn,params,line)
     t=o["totals"]
     delta=t["delta"]
     net="缺上周基线" if delta is None else f"较上周末{'净增加' if delta>0 else '净减少'} {abs(delta)} 条"
-    lines=[f"ZF Saarbrücken · EOL 测试线周报  {o['week'].replace('-W','-CW')}",
+    lines=[f"ZF Saarbrücken · {line.name}周报  {o['week'].replace('-W','-CW')}",
            f"{o['start']} 至 {o['end']}，统计截至 {o['as_of']}","",
            f"我方未结 {t['ours']} 条，客户未结 {t['customer']} 条，{net}。",
            f"本周新增 {t['new']} 条，重开或责任转回 {t['reopened']} 条，客户关闭 {t['closed']} 条，转纯 ZF {t['transferred']} 条。","",
-           "区域汇总   未结 / High / Medium / Low"]
-    for a in o["areas"]:
-        lines.append(f"{a['area']}   {a['total']} / {a['High']} / {a['Medium']} / {a['Low']}")
+           ("区域汇总" if line.phased else "工位汇总（多工位问题在各工位各计一次）")+"   未结 / High / Medium / Low"]
+    group = "area" if line.phased else "station"
+    for a in o[group+"s"]:
+        lines.append(f"{a[group]}   {a['total']} / {a['High']} / {a['Medium']} / {a['Low']}")
     indexed={r["id"]:r for r in rows_at(conn,o["as_of"])}
-    lines.extend(["", f"分期统计（客户编号 ≤ {EOL_PHASE_MAX_CUSTOMER_NUMBER}，含同号后缀）"])
-    for phase, counts in phase_summary(indexed.values(), o).items():
-        lines.extend([phase,
-                      f"  问题总数 {counts['total']} / 我方未结 {counts['open']}",
-                      f"  本周计划、整改、关闭或上报（去重） {counts['active']}",
-                      f"  本周客户关闭 {counts['closed']} / 截至日已上报待核查 {counts['pending']}"])
+    if line.phased:
+        lines.extend(["", f"分期统计（客户编号 ≤ {EOL_PHASE_MAX_CUSTOMER_NUMBER}，含同号后缀）"])
+        for phase, counts in phase_summary(indexed.values(), o).items():
+            lines.extend([phase,
+                          f"  问题总数 {counts['total']} / 我方未结 {counts['open']}",
+                          f"  本周计划、整改、关闭或上报（去重） {counts['active']}",
+                          f"  本周客户关闭 {counts['closed']} / 截至日已上报待核查 {counts['pending']}"])
     lines.extend(["","本周状态更新"])
     for e in o["events"]:
         r=indexed[e["issue_id"]]

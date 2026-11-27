@@ -1,5 +1,5 @@
 // 协调页面路由与详情弹窗。 / Coordinate page routes and detail overlays.
-import {api,closeDialog,context,dialogForm,failure,field,go,href,icon,loading,localStorageRead,route,setActor,shiftWeek,toast} from "./core.js";
+import {api,line,closeDialog,context,dialogForm,failure,field,go,href,icon,loading,localStorageRead,route,setActor,shiftWeek,toast} from "./core.js";
 import {overview} from "./overview.js";
 import {issues,bindIssues,positionOpenFilter} from "./issues.js";
 import {openIssue,transition,bindDrawer} from "./detail.js";
@@ -15,9 +15,23 @@ const main=document.getElementById("main"),drawer=document.getElementById("detai
 let controller,renderSeq=0,pageKey="",previousRoute="",configured=false,pendingConfig,detailId="";
 const scrollPositions=new Map();
 if("scrollRestoration" in history)history.scrollRestoration="manual";
+const listStorageKey = key => key === "eol" ? "opl-last-issues" : "opl-last-issues-"+key;
+const storageKey = listStorageKey(line.key);
+document.getElementById("line-switch").addEventListener("change", e=>{
+  const page = address().page;
+  let hash = "#" + page;
+  if(page === "issues"){
+    const targetKey = e.target.selectedOptions[0].dataset.line;
+    try{
+      const saved = sessionStorage.getItem(listStorageKey(targetKey));
+      if(saved && /^#issues(?:\?|$)/.test(saved))hash = saved;
+    }catch{ /* 无本地存储时打开默认清单。 / Fall back to the default list. */ }
+  }
+  location.assign(e.target.value + hash);
+});
 const listNav=document.querySelector('[data-nav="issues"]');
 try{
-  const remembered=sessionStorage.getItem("opl-last-issues");
+  const remembered=sessionStorage.getItem(storageKey);
   if(remembered && /^#issues(?:\?|$)/.test(remembered))listNav.setAttribute("href",remembered);
 }catch{ /* The link still works without browser storage. */ }
 context.refreshConfig=()=>{
@@ -68,13 +82,13 @@ async function render(){
   const restore=scrollPositions.get(a.base);
   pageKey=a.base;previousRoute=a.page;
   document.getElementById("crumb").textContent=page.label;
-  document.title=page.label+" · EOL 问题工作台";
+  document.title=page.label+" · "+line.name;
   for(const link of document.querySelectorAll("[data-nav]")){
     if(link.dataset.nav===a.page)link.setAttribute("aria-current","page");else link.removeAttribute("aria-current");
   }
   if(a.page==="issues"){
     listNav.setAttribute("href",a.base);
-    try{sessionStorage.setItem("opl-last-issues",a.base);}catch{ /* Navigation keeps its current link. */ }
+    try{sessionStorage.setItem(storageKey,a.base);}catch{ /* Navigation keeps its current link. */ }
   }
   main.setAttribute("aria-busy","true");
   if(changed){delete main.dataset.route;main.innerHTML=loading();window.scrollTo(0,0);}

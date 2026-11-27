@@ -1,5 +1,5 @@
 // 呈现每周变更、计划与工位统计。 / Present weekly changes, work plans and station counts.
-import {api,areaToken,context,count,empty,esc,href,icon,issueLink,pageTitle,qs,stateName,statePill,weekLabel,weekTools} from "./core.js";
+import {line,api,areaToken,context,count,empty,esc,href,icon,issueLink,pageTitle,qs,stateName,statePill,weekLabel,weekTools} from "./core.js";
 
 const milestones = [
   ["working","进入整改","#4c9a7e"],["ready","完成待上报","#c6904d"],
@@ -77,7 +77,7 @@ export async function overview(params, signal) {
     '<div class="stack"><section class="card"><div class="card-head"><div class="head-area">'+icon("dashboard")+'<h2>本周状态更新</h2></div>'+withIssues(weekLink,"查看本周更新")+'</div><div class="slab">'+metrics+'</div></section>'+
     '<div class="dashboard-grid"><section class="card"><div class="card-head"><h2 id="weekly-events-title">状态变更记录</h2><span class="card-text">'+esc(weekLabel(w))+'</span></div><div class="card-body">'+eventBody+'<div class="hint-row"><small>截至所选日</small>'+pending+'</div></div></section>'+
     '<section class="card"><div class="card-head"><h2 id="weekly-plans-title">本周实施计划与整改</h2>'+withIssues({mode:"planned",week:w,scope:"all"},"查看全部")+'</div><div class="card-body">'+planBody+'<div class="hint-row">'+withIssues({mode:"unreported",week:w,scope:"all"},"查看计划中尚未上报的项")+'</div></div></section></div>'+
-    '<section class="card"><div class="card-head"><div class="head-area">'+icon("production")+'<h2>测试线整体情况</h2></div><span class="card-text">截至 '+esc(data.as_of || data.end)+'</span></div>'+overall+
-    '<div class="table-caption"><h3>按区域类型</h3></div>'+distributionTable(data.areas,"area",asof)+
-    '<details class="collapse"><summary>查看各工位统计</summary>'+distributionTable(data.stations,"station",asof)+'</details></section></div>';
+    '<section class="card"><div class="card-head"><div class="head-area">'+icon("production")+'<h2>'+esc(line.name)+'整体情况</h2></div><span class="card-text">截至 '+esc(data.as_of || data.end)+'</span></div>'+overall+
+    (line.phased?'<div class="table-caption"><h3>按区域类型</h3></div>'+distributionTable(data.areas,"area",asof):"")+
+    '<details class="collapse"'+(line.phased?"":" open")+'><summary>查看各工位统计</summary>'+distributionTable(data.stations,"station",asof)+'</details></section></div>';
 }
